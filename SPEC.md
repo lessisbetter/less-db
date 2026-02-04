@@ -209,16 +209,79 @@ await db.transaction("rw", [db.friends, db.logs], async (tx) => {
 // Transaction modes
 type TransactionMode = "r" | "readonly" | "rw" | "readwrite";
 
+// Transaction options (IndexedDB 3.0)
+interface TransactionOptions {
+  durability?: "default" | "strict" | "relaxed";
+}
+
 // Transaction interface
 interface Transaction {
   readonly mode: TransactionMode;
   readonly tables: string[];
+  readonly active: boolean;
   abort(): void;
+  commit(): void; // IndexedDB 3.0 - signal early completion
 
   // Table access within transaction
   table<T, TKey>(name: string): Table<T, TKey>;
 }
 ```
+
+#### Implicit Transactions
+
+Every operation outside an explicit transaction automatically creates its own single-operation transaction:
+
+```typescript
+// These are TWO separate transactions - not atomic!
+await db.users.add({ name: "Alice" }); // Transaction 1
+await db.users.add({ name: "Bob" }); // Transaction 2
+
+// For atomicity, use explicit transaction:
+await db.transaction("rw", ["users"], async (tx) => {
+  await tx.users.add({ name: "Alice" });
+  await tx.users.add({ name: "Bob" });
+}); // Single transaction - atomic
+```
+
+#### ⚠️ Important: Transaction Context Does Not Propagate
+
+**LessDB does not automatically propagate transaction context to helper functions.** Operations inside helper functions will create new transactions unless you explicitly pass the transaction context:
+
+```typescript
+// ❌ BROKEN: Helper escapes the transaction
+await db.transaction("rw", ["users", "posts"], async (tx) => {
+  await tx.users.add({ name: "Alice" });
+  await createDefaultPosts(); // Creates NEW transactions!
+});
+
+async function createDefaultPosts() {
+  // These are NOT in the parent transaction - they use implicit transactions
+  await db.posts.add({ title: "Welcome" }); // New transaction
+  await db.posts.add({ title: "Getting Started" }); // New transaction
+}
+```
+
+```typescript
+// ✅ CORRECT: Pass transaction explicitly
+await db.transaction("rw", ["users", "posts"], async (tx) => {
+  await tx.users.add({ name: "Alice" });
+  await createDefaultPosts(tx); // Same transaction
+});
+
+async function createDefaultPosts(tx: Transaction) {
+  // Use tx.table() to stay in the same transaction
+  await tx.table("posts").add({ title: "Welcome" });
+  await tx.table("posts").add({ title: "Getting Started" });
+}
+```
+
+**Why this matters:**
+
+- Operations that look atomic may not be
+- If the parent transaction fails, helper operations may have already committed
+- You might read stale data (not seeing uncommitted writes from parent transaction)
+
+**Dexie's PSD (Promise-Specific Data)** solves this by tracking transaction context through async/await chains. This is complex to implement and not yet available in LessDB. See the "Dexie Deep Alignment" section for details.
 
 ### Versioning & Migrations
 

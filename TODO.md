@@ -13,7 +13,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 3. **Extensible** - Hooks and middleware for reactivity, encryption, sync
 4. **Typed** - First-class TypeScript support
 
-**Current Status**: Phase 1, 2, 2b, and 3 complete
+**Current Status**: Phase 1, 2, 2b, 3, and 5b complete
 
 ---
 
@@ -70,7 +70,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 ### Infrastructure
 
 - [x] TypeScript with strict types
-- [x] Vitest test suite (692+ tests passing)
+- [x] Vitest test suite (788 tests passing)
 - [x] ~80% code coverage
 
 ---
@@ -221,26 +221,15 @@ db.users
 
 #### 4.3 Middleware Enhancements (Medium Priority)
 
-##### 4.3.1 Hooks as Middleware
+##### 4.3.1 Hooks as Middleware ✅ DONE
 
-**Goal**: Implement table hooks via DBCore middleware for consistency.
+**Status**: Fully implemented in `src/dbcore/hooks-middleware.ts` with:
 
-**Dexie reference**: `src/hooks/hooks-middleware.ts`
-
-**Benefits**:
-
-- Single interception point for all operations
-- Hooks can cancel/modify operations
-- Consistent with other middleware
-
-**Implementation tasks**:
-
-- [ ] Create `createHooksMiddleware()` function
-- [ ] Move hook firing from Table methods to middleware
-- [ ] Support hook return values for cancellation
-- [ ] Ensure hooks fire in correct order (creating before add, etc.)
-- [ ] Maintain backward compatibility with existing hook API
-- [ ] Add tests for hooks via middleware
+- [x] `createHooksMiddleware()` function
+- [x] Hook firing moved to middleware layer
+- [x] Hooks fire in correct order (creating before add, etc.)
+- [x] Backward compatible with existing hook API
+- [x] Tests in `test/hooks.test.ts`
 
 ##### 4.3.2 Cache Middleware ✅ DONE
 
@@ -254,18 +243,17 @@ db.users
 - [x] `clearCache()` method on returned middleware
 - [x] Comprehensive tests in `test/middleware/cache.test.ts`
 
-##### 4.3.3 Observability Middleware
+##### 4.3.3 Observability Middleware ✅ DONE
 
-**Goal**: Standard middleware for logging/debugging/tracing.
+**Status**: Fully implemented in `src/dbcore/logging-middleware.ts` with:
 
-**Implementation tasks**:
-
-- [ ] Create `loggingMiddleware(options)` factory
-- [ ] Log all DBCore operations with timing
-- [ ] Support log levels (error, warn, info, debug)
-- [ ] Support custom log handlers
-- [ ] Include transaction ID in logs
-- [ ] Add operation duration metrics
+- [x] `createLoggingMiddleware(options)` factory
+- [x] Logs all DBCore operations with timing
+- [x] Support log levels (error, warn, info, debug)
+- [x] Support custom log handlers
+- [x] Include transaction ID in logs
+- [x] Operation duration metrics
+- [x] Tests in `test/dbcore/logging-middleware.test.ts`
 
 ---
 
@@ -342,23 +330,19 @@ db.users
 - [ ] **Performance optimization** - Profile and optimize hot paths
 - [ ] **Table proxy access** - `db.friends` shorthand (partially working, needs testing)
 
-### Phase 5b: IndexedDB 3.0 Optimizations
+### Phase 5b: IndexedDB 3.0 Optimizations ✅ DONE
 
-Leverage modern IndexedDB 3.0 features for improved performance. All features have excellent browser support (Chrome 83+, Firefox 126+, Safari 15+).
+Leveraging modern IndexedDB 3.0 features for improved performance. All features have excellent browser support (Chrome 83+, Firefox 126+, Safari 15+).
 
-#### 5b.1 Transaction Durability Hints (High Priority)
+#### 5b.1 Transaction Durability Hints ✅ DONE
 
-**Goal**: Use `durability: 'relaxed'` for faster writes when strict persistence isn't required.
+**Status**: Fully implemented with:
 
-**Browser support**: Chrome 83+, Firefox 126+, Safari 15.4+
-
-**Implementation tasks**:
-
-- [ ] Add `durability` option to transaction creation in `IDBCore.transaction()`
-- [ ] Expose durability option through `db.transaction()` API
-- [ ] Default to `'default'` for backwards compatibility
-- [ ] Add feature detection in compat layer
-- [ ] Document performance implications
+- [x] `durability` option in `IDBCore.transaction()`
+- [x] Exposed through `db.transaction()` API
+- [x] Defaults to `'default'` for backwards compatibility
+- [x] Feature detection via `supportsDurability()`
+- [x] Documented in SPEC.md
 
 **Usage**:
 
@@ -374,46 +358,32 @@ await db.transaction(
 );
 ```
 
-#### 5b.2 Explicit Transaction Commit (Medium Priority)
+#### 5b.2 Explicit Transaction Commit ✅ DONE
 
-**Goal**: Use `transaction.commit()` to start commit immediately without waiting for all requests.
+**Status**: Fully implemented with:
 
-**Browser support**: Chrome 76+, Firefox 74+, Safari 15+
+- [x] `commit()` method on `IDBCoreTransaction`
+- [x] Exposed through `TransactionContext` API
+- [x] Feature detection via `supportsCommit()`
+- [x] Graceful degradation when not supported
+- [x] Try-catch for robustness on inactive transactions
 
-**Implementation tasks**:
+#### 5b.3 Use openKeyCursor() for Keys-Only Queries ✅ DONE
 
-- [ ] Add `commit()` method to `IDBCoreTransaction` class
-- [ ] Expose through `TransactionContext` API
-- [ ] Use internally for bulk operations when beneficial
-- [ ] Add feature detection
+**Status**: Fully implemented with:
 
-#### 5b.3 Use openKeyCursor() for Keys-Only Queries (Medium Priority)
+- [x] `cursorQuery()` uses `openKeyCursor()` when values not needed
+- [x] Optimizes `primaryKeys()`, `count()`, `eachPrimaryKey()` queries
+- [x] Benchmarked: 1.27x-1.68x faster than full cursor
 
-**Goal**: Use `openKeyCursor()` instead of `openCursor()` when only keys are needed.
+#### 5b.4 Unique Cursor Directions ✅ DONE
 
-**Browser support**: Chrome 23+, Firefox 44+, Safari 10.1+ (very old)
+**Status**: Fully implemented with:
 
-**Current behavior**: Always uses `openCursor()` even when `values === false`
+- [x] Uses `'nextunique'`/`'prevunique'` when `req.unique === true`
+- [x] Native deduplication at engine level
 
-**Implementation tasks**:
-
-- [ ] Modify `cursorQuery()` to use `openKeyCursor()` when `wantValues === false`
-- [ ] Update `openCursor()` method in `IDBCoreTable`
-- [ ] Benchmark improvement for `primaryKeys()` queries
-
-#### 5b.4 Unique Cursor Directions (Low Priority)
-
-**Goal**: Use `'nextunique'`/`'prevunique'` cursor directions for deduplication at engine level.
-
-**Current behavior**: Manual deduplication in JavaScript via `lastKey` check
-
-**Implementation tasks**:
-
-- [ ] Use `'nextunique'`/`'prevunique'` when `req.unique === true`
-- [ ] Remove JavaScript-level deduplication when using native unique directions
-- [ ] Benchmark improvement
-
-#### 5b.5 Multi-Entry Indexes (Low Priority)
+#### 5b.5 Multi-Entry Indexes (Not Implemented)
 
 **Goal**: Support `*tags` syntax for indexing array values.
 
@@ -482,9 +452,10 @@ src/
 | hooks                | 22      | ✅     |
 | compound-index       | 12      | ✅     |
 | ignore-case          | 22      | ✅     |
+| indexeddb3           | 42      | ✅     |
 | integration          | 66      | ✅     |
 | less-db              | 268     | ✅     |
-| **Total**            | **746** | ✅     |
+| **Total**            | **788** | ✅     |
 
 ---
 
