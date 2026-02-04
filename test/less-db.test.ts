@@ -8,7 +8,7 @@ import {
   type DBCoreTable,
   type DBCoreTransaction,
   type DBCoreMutateRequest,
-} from "./index.js";
+} from "../src/index.js";
 
 interface User {
   id?: number;

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { Event, Hook, EventEmitter, createTableHooks, type DatabaseChange } from "./events.js";
+import {
+  Event,
+  Hook,
+  EventEmitter,
+  createTableHooks,
+  type DatabaseChange,
+} from "../../src/events/events.js";
 
 describe("events", () => {
   describe("Event", () => {

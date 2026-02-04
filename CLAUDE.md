@@ -13,7 +13,7 @@ pnpm install        # Install dependencies
 pnpm build          # Build (TypeScript compilation)
 pnpm test           # Run tests in watch mode
 pnpm test:run       # Run tests once
-pnpm test:run src/path/to/file.test.ts  # Run a single test file
+pnpm test:run test/path/to/file.test.ts  # Run a single test file
 pnpm test:coverage  # Run tests with coverage
 pnpm typecheck      # Type check without emitting
 pnpm check          # Run format + typecheck + tests (CI validation)
@@ -79,4 +79,4 @@ Middleware wraps DBCore to intercept operations. Register with `db.use({ name, l
 
 ## Testing
 
-Tests use Vitest with `fake-indexeddb` for mocking IndexedDB (see `src/test-setup.ts`). Test files are colocated with source (`*.test.ts`).
+Tests use Vitest with `fake-indexeddb` for mocking IndexedDB (see `test/setup.ts`). Test files are in a separate `test/` directory that mirrors the `src/` structure.

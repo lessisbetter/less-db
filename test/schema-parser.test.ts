@@ -10,8 +10,8 @@ import {
   diffSchemas,
   type TableSchema,
   type DatabaseSchema,
-} from "./schema-parser.js";
-import { SchemaError } from "./errors/index.js";
+} from "../src/schema-parser.js";
+import { SchemaError } from "../src/errors/index.js";
 
 describe("schema-parser", () => {
   describe("parseTableSchema", () => {

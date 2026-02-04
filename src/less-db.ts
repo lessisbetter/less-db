@@ -600,7 +600,9 @@ export class LessDB {
    * Can pass the middleware instance or an object with {stack, name} to match by name.
    */
   unuse(
-    middleware: Middleware | { stack: "dbcore"; name: string; create?: (downCore: DBCore) => Partial<DBCore> },
+    middleware:
+      | Middleware
+      | { stack: "dbcore"; name: string; create?: (downCore: DBCore) => Partial<DBCore> },
   ): this {
     if ("create" in middleware && typeof middleware.create === "function") {
       // Passed middleware instance - find by reference or name
@@ -643,7 +645,8 @@ export class LessDB {
         stack: partialCore.stack ?? downCore.stack,
         schema: partialCore.schema ?? downCore.schema,
         table: partialCore.table?.bind(partialCore) ?? downCore.table.bind(downCore),
-        transaction: partialCore.transaction?.bind(partialCore) ?? downCore.transaction.bind(downCore),
+        transaction:
+          partialCore.transaction?.bind(partialCore) ?? downCore.transaction.bind(downCore),
       };
     }
 

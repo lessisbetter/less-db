@@ -12,7 +12,7 @@ import {
   BlockedError,
   VersionChangeError,
   mapError,
-} from "./errors.js";
+} from "../../src/errors/errors.js";
 
 describe("errors", () => {
   describe("LessDBError", () => {

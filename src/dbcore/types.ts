@@ -348,10 +348,7 @@ export interface DBCore {
   table(name: string): DBCoreTable;
 
   /** Create a transaction */
-  transaction(
-    tables: string[],
-    mode: TransactionMode,
-  ): DBCoreTransaction;
+  transaction(tables: string[], mode: TransactionMode): DBCoreTransaction;
 }
 
 // ============================================
@@ -457,15 +454,11 @@ export function toDBCoreIndex(
  * Create a DBCoreTableSchema from a TableSchema.
  */
 export function toDBCoreTableSchema(name: string, schema: TableSchema): DBCoreTableSchema {
-  const primaryKey = toDBCoreIndex(
-    schema.primaryKey.name,
-    schema.primaryKey.keyPath,
-    {
-      isPrimaryKey: true,
-      autoIncrement: schema.primaryKey.auto,
-      unique: true,
-    },
-  );
+  const primaryKey = toDBCoreIndex(schema.primaryKey.name, schema.primaryKey.keyPath, {
+    isPrimaryKey: true,
+    autoIncrement: schema.primaryKey.auto,
+    unique: true,
+  });
 
   const indexes = schema.indexes.map((idx) =>
     toDBCoreIndex(idx.name, idx.keyPath, { unique: idx.unique }),
@@ -477,10 +470,7 @@ export function toDBCoreTableSchema(name: string, schema: TableSchema): DBCoreTa
 /**
  * Create a DBCoreQuery for primary key lookup.
  */
-export function primaryKeyQuery(
-  schema: DBCoreTableSchema,
-  range: DBCoreKeyRange,
-): DBCoreQuery {
+export function primaryKeyQuery(schema: DBCoreTableSchema, range: DBCoreKeyRange): DBCoreQuery {
   return {
     index: schema.primaryKey,
     range,

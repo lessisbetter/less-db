@@ -13,7 +13,7 @@ import {
   browserEnv,
   safeStopPropagation,
   safePreventDefault,
-} from "./index.js";
+} from "../../src/compat/index.js";
 
 describe("compat", () => {
   describe("getIndexedDB", () => {

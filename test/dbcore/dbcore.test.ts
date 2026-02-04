@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { parseTableSchema, type TableSchema } from "../schema-parser.js";
+import { parseTableSchema, type TableSchema } from "../../src/schema-parser.js";
 import {
   createIDBCore,
   keyRangeEqual,
@@ -12,7 +12,7 @@ import {
   indexQuery,
   type DBCore,
   type InternalTransaction,
-} from "./index.js";
+} from "../../src/dbcore/index.js";
 
 describe("DBCore", () => {
   let db: IDBDatabase;
