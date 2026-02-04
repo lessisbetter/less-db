@@ -132,6 +132,48 @@ describe("hooks", () => {
 
       expect(user?.name).toBe("second");
     });
+
+    it("transforms items in toArray", async () => {
+      await db.open();
+      const users = db.table<User, number>("users");
+
+      users.hook.reading.subscribe((obj) => ({
+        ...obj,
+        name: obj.name.toUpperCase(),
+      }));
+
+      await users.bulkAdd([
+        { name: "Alice", email: "alice@test.com" },
+        { name: "Bob", email: "bob@test.com" },
+      ]);
+      const results = await users.toArray();
+
+      expect(results[0]?.name).toBe("ALICE");
+      expect(results[1]?.name).toBe("BOB");
+    });
+
+    it("raw() bypasses reading hooks", async () => {
+      await db.open();
+      const users = db.table<User, number>("users");
+
+      users.hook.reading.subscribe((obj) => ({
+        ...obj,
+        name: obj.name.toUpperCase(),
+      }));
+
+      await users.bulkAdd([
+        { name: "Alice", email: "alice@test.com" },
+        { name: "Bob", email: "bob@test.com" },
+      ]);
+
+      // Without raw(), hooks are applied
+      const transformed = await users.toCollection().toArray();
+      expect(transformed[0]?.name).toBe("ALICE");
+
+      // With raw(), hooks are bypassed
+      const raw = await users.toCollection().raw().toArray();
+      expect(raw[0]?.name).toBe("Alice");
+    });
   });
 
   describe("updating hook", () => {

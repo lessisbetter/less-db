@@ -61,17 +61,8 @@ export class Table<T, TKey> {
   get(key: TKey): LessDBPromise<T | undefined> {
     return this._wrap(async () => {
       const trans = this._getTransaction();
-      let value = (await this._coreTable.get({ trans, key })) as T | undefined;
-
-      // Apply reading hook
-      if (value !== undefined && this.hook.reading.hasHandlers()) {
-        const transformed = this.hook.reading.fire(value);
-        if (transformed !== undefined) {
-          value = transformed;
-        }
-      }
-
-      return value;
+      // Reading hooks are applied by the hooks middleware
+      return (await this._coreTable.get({ trans, key })) as T | undefined;
     });
   }
 
@@ -82,11 +73,7 @@ export class Table<T, TKey> {
     return this._wrap(async () => {
       const trans = this._getTransaction();
 
-      // Fire creating hook only if there are handlers
-      if (this.hook.creating.hasHandlers()) {
-        this.hook.creating.fire(key, item);
-      }
-
+      // Creating hooks are fired by the hooks middleware
       const result = await this._coreTable.mutate({
         type: "add",
         trans,
@@ -142,13 +129,14 @@ export class Table<T, TKey> {
     return this._wrap(async () => {
       const trans = this._getTransaction();
 
-      // Get existing item
+      // Get existing item (reading hooks applied by middleware)
       const existing = (await this._coreTable.get({ trans, key })) as T | undefined;
       if (!existing) {
         return 0;
       }
 
-      // Fire updating hook
+      // Fire updating hook with the changes object (not the merged result)
+      // This must be done at the Table level since the middleware only sees final values
       this.hook.updating.fire(changes, key, existing);
 
       // Merge changes
@@ -179,13 +167,13 @@ export class Table<T, TKey> {
       const lookupKey = key ?? (keyPath ? (extractKeyValue(item, keyPath) as TKey) : undefined);
 
       if (lookupKey !== undefined) {
-        // Try to get existing item
+        // Try to get existing item (reading hooks applied by middleware)
         const existing = (await this._coreTable.get({ trans, key: lookupKey })) as T | undefined;
 
         if (existing) {
-          // Merge and update
-          const merged = { ...existing, ...item } as T;
+          // Fire updating hook with the changes before merging
           this.hook.updating.fire(item as Partial<T>, lookupKey, existing);
+          const merged = { ...existing, ...item } as T;
 
           const result = await this._coreTable.mutate({
             type: "put",
@@ -203,9 +191,7 @@ export class Table<T, TKey> {
         }
       }
 
-      // Item doesn't exist, add it
-      this.hook.creating.fire(lookupKey, item as T);
-
+      // Item doesn't exist, add it (creating hooks are fired by the hooks middleware)
       const result = await this._coreTable.mutate({
         type: "add",
         trans,
@@ -233,14 +219,7 @@ export class Table<T, TKey> {
     return this._wrap(async () => {
       const trans = this._getTransaction();
 
-      // Get existing for hook
-      if (this.hook.deleting.hasHandlers()) {
-        const existing = (await this._coreTable.get({ trans, key })) as T | undefined;
-        if (existing) {
-          this.hook.deleting.fire(key, existing);
-        }
-      }
-
+      // Deleting hooks are fired by the hooks middleware
       await this._coreTable.mutate({
         type: "delete",
         trans,
@@ -259,18 +238,8 @@ export class Table<T, TKey> {
   bulkGet(keys: TKey[]): LessDBPromise<(T | undefined)[]> {
     return this._wrap(async () => {
       const trans = this._getTransaction();
-      const values = (await this._coreTable.getMany({ trans, keys })) as (T | undefined)[];
-
-      // Apply reading hooks
-      if (this.hook.reading.hasHandlers()) {
-        return values.map((value) => {
-          if (value === undefined) return undefined;
-          const transformed = this.hook.reading.fire(value);
-          return transformed !== undefined ? transformed : value;
-        });
-      }
-
-      return values;
+      // Reading hooks are applied by the hooks middleware
+      return (await this._coreTable.getMany({ trans, keys })) as (T | undefined)[];
     });
   }
 
@@ -281,13 +250,7 @@ export class Table<T, TKey> {
     return this._wrap(async () => {
       const trans = this._getTransaction();
 
-      // Fire creating hooks (only if there are handlers)
-      if (this.hook.creating.hasHandlers()) {
-        for (let i = 0; i < items.length; i++) {
-          this.hook.creating.fire(keys?.[i], items[i]!);
-        }
-      }
-
+      // Creating hooks are fired by the hooks middleware
       const result = await this._coreTable.mutate({
         type: "add",
         trans,
@@ -347,17 +310,15 @@ export class Table<T, TKey> {
       const existingItems = (await this._coreTable.getMany({ trans, keys })) as (T | undefined)[];
 
       // Prepare updates for items that exist
+      // Updating hooks are fired here since we have the changes object
       const updates: { key: TKey; value: T }[] = [];
-      const hasUpdatingHook = this.hook.updating.hasHandlers();
 
       for (let i = 0; i < keysAndChanges.length; i++) {
         const existing = existingItems[i];
         const item = keysAndChanges[i];
         if (existing !== undefined && item !== undefined) {
-          // Only fire hook if there are handlers
-          if (hasUpdatingHook) {
-            this.hook.updating.fire(item.changes, item.key, existing);
-          }
+          // Fire updating hook with the changes object
+          this.hook.updating.fire(item.changes, item.key, existing);
           const merged = { ...existing, ...item.changes } as T;
           updates.push({ key: item.key, value: merged });
         }

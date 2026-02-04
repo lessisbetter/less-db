@@ -1070,9 +1070,7 @@ describe("type-based error catching", () => {
   it("chains then() on successful operations", async () => {
     const users = db.table<User, number>("users");
 
-    const id = await users
-      .add({ name: "Alice", email: "alice@test.com" })
-      .then((id) => id * 10);
+    const id = await users.add({ name: "Alice", email: "alice@test.com" }).then((id) => id * 10);
 
     expect(id).toBeGreaterThan(0);
   });
@@ -1082,9 +1080,7 @@ describe("type-based error catching", () => {
     await users.add({ name: "Alice", email: "alice@test.com" });
 
     // Standard catch should work
-    const result = await users
-      .add({ name: "Dupe", email: "alice@test.com" })
-      .catch(() => -1);
+    const result = await users.add({ name: "Dupe", email: "alice@test.com" }).catch(() => -1);
 
     expect(result).toBe(-1);
   });

@@ -187,6 +187,8 @@ export interface DBCoreQueryRequest {
    * When provided, forces cursor-based iteration instead of getAll.
    */
   cursorAlgorithm?: CursorAlgorithm;
+  /** Skip reading hooks (used by Collection.raw()) */
+  raw?: boolean;
 }
 
 /**

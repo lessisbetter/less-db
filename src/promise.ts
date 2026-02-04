@@ -9,7 +9,6 @@
  * ```
  */
 
-
 /**
  * Error constructor type for type-based catching.
  */
@@ -24,7 +23,7 @@ export class LessDBPromise<T> extends Promise<T> {
    * @param ErrorType - The error constructor to match
    * @param onrejected - Handler called when error matches the type
    */
-  catch<E extends Error, TResult = never>(
+  override catch<E extends Error, TResult = never>(
     ErrorType: ErrorConstructor<E>,
     onrejected: (error: E) => TResult | PromiseLike<TResult>,
   ): LessDBPromise<T | TResult>;
@@ -33,14 +32,14 @@ export class LessDBPromise<T> extends Promise<T> {
    * Catch all errors (standard Promise.catch behavior).
    * @param onrejected - Handler called for any error
    */
-  catch<TResult = never>(
+  override catch<TResult = never>(
     onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null,
   ): LessDBPromise<T | TResult>;
 
   /**
    * Implementation of overloaded catch.
    */
-  catch<E extends Error, TResult = never>(
+  override catch<E extends Error, TResult = never>(
     errorTypeOrHandler?:
       | ErrorConstructor<E>
       | ((reason: unknown) => TResult | PromiseLike<TResult>)
@@ -52,8 +51,7 @@ export class LessDBPromise<T> extends Promise<T> {
     if (
       typeof errorTypeOrHandler === "function" &&
       onrejected !== undefined &&
-      (errorTypeOrHandler === Error ||
-        errorTypeOrHandler.prototype instanceof Error)
+      ((errorTypeOrHandler as unknown) === Error || errorTypeOrHandler.prototype instanceof Error)
     ) {
       const ErrorType = errorTypeOrHandler as ErrorConstructor<E>;
       const handler = onrejected;
@@ -77,7 +75,7 @@ export class LessDBPromise<T> extends Promise<T> {
   /**
    * Override then to return LessDBPromise for chaining.
    */
-  then<TResult1 = T, TResult2 = never>(
+  override then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): LessDBPromise<TResult1 | TResult2> {
@@ -87,7 +85,7 @@ export class LessDBPromise<T> extends Promise<T> {
   /**
    * Override finally to return LessDBPromise for chaining.
    */
-  finally(onfinally?: (() => void) | null): LessDBPromise<T> {
+  override finally(onfinally?: (() => void) | null): LessDBPromise<T> {
     return super.finally(onfinally) as LessDBPromise<T>;
   }
 }

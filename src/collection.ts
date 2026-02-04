@@ -206,6 +206,7 @@ export class Collection<T, TKey> {
       reverse: ctx.reverse,
       unique: ctx.unique,
       cursorAlgorithm: ctx.cursorAlgorithm,
+      raw: ctx.raw,
     };
 
     const response = await ctx.table.query(request);

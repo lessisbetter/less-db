@@ -607,7 +607,7 @@ class IDBCoreTable implements DBCoreTable {
                   results[i] = undefined;
                   handleComplete();
                 } else {
-                  // For single-item operations, reject and let transaction abort
+                  // For single-item operations: reject and let transaction abort naturally
                   reject(mapError(idbReq.error));
                 }
               };
@@ -679,7 +679,7 @@ class IDBCoreTable implements DBCoreTable {
                   results[i] = undefined;
                   handleComplete();
                 } else {
-                  // For single-item operations, reject and let transaction abort
+                  // For single-item operations: reject and let transaction abort naturally
                   reject(mapError(idbReq.error));
                 }
               };

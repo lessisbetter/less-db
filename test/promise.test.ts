@@ -21,9 +21,7 @@ describe("LessDBPromise", () => {
     });
 
     it("rejects like a normal Promise", async () => {
-      const promise = new LessDBPromise<number>((_, reject) =>
-        reject(new Error("test error")),
-      );
+      const promise = new LessDBPromise<number>((_, reject) => reject(new Error("test error")));
       await expect(promise).rejects.toThrow("test error");
     });
 
@@ -69,17 +67,13 @@ describe("LessDBPromise", () => {
     });
 
     it("catch() returns LessDBPromise", () => {
-      const promise = new LessDBPromise<number>((_, reject) =>
-        reject(new Error("test")),
-      );
+      const promise = new LessDBPromise<number>((_, reject) => reject(new Error("test")));
       const chained = promise.catch(() => 0);
       expect(chained).toBeInstanceOf(LessDBPromise);
     });
 
     it("handles null handler", async () => {
-      const promise = new LessDBPromise<number>((_, reject) =>
-        reject(new Error("test")),
-      );
+      const promise = new LessDBPromise<number>((_, reject) => reject(new Error("test")));
       await expect(promise.catch(null)).rejects.toThrow("test");
     });
   });
@@ -153,9 +147,7 @@ describe("LessDBPromise", () => {
     });
 
     it("chains multiple type-based catches", async () => {
-      const promise = new LessDBPromise<number>((_, reject) =>
-        reject(new DataError("bad data")),
-      );
+      const promise = new LessDBPromise<number>((_, reject) => reject(new DataError("bad data")));
 
       const constraintHandler = vi.fn();
       const notFoundHandler = vi.fn();
@@ -173,16 +165,12 @@ describe("LessDBPromise", () => {
     });
 
     it("falls through to generic catch after type-based catches", async () => {
-      const promise = new LessDBPromise<number>((_, reject) =>
-        reject(new AbortError("aborted")),
-      );
+      const promise = new LessDBPromise<number>((_, reject) => reject(new AbortError("aborted")));
 
       const constraintHandler = vi.fn();
       const genericHandler = vi.fn().mockReturnValue("generic");
 
-      const result = await promise
-        .catch(ConstraintError, constraintHandler)
-        .catch(genericHandler);
+      const result = await promise.catch(ConstraintError, constraintHandler).catch(genericHandler);
 
       expect(constraintHandler).not.toHaveBeenCalled();
       expect(genericHandler).toHaveBeenCalledOnce();
@@ -191,9 +179,7 @@ describe("LessDBPromise", () => {
     });
 
     it("type-based catch returns LessDBPromise", () => {
-      const promise = new LessDBPromise<number>((_, reject) =>
-        reject(new ConstraintError("test")),
-      );
+      const promise = new LessDBPromise<number>((_, reject) => reject(new ConstraintError("test")));
       const chained = promise.catch(ConstraintError, () => 0);
       expect(chained).toBeInstanceOf(LessDBPromise);
     });
@@ -224,16 +210,12 @@ describe("LessDBPromise", () => {
     });
 
     it("type-based catch does not catch non-Error rejections", async () => {
-      const promise = new LessDBPromise<number>((_, reject) =>
-        reject("string error"),
-      );
+      const promise = new LessDBPromise<number>((_, reject) => reject("string error"));
 
       const errorHandler = vi.fn();
       const genericHandler = vi.fn().mockReturnValue("handled");
 
-      const result = await promise
-        .catch(Error, errorHandler)
-        .catch(genericHandler);
+      const result = await promise.catch(Error, errorHandler).catch(genericHandler);
 
       expect(errorHandler).not.toHaveBeenCalled();
       expect(genericHandler).toHaveBeenCalledWith("string error");

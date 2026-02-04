@@ -17,6 +17,7 @@ import {
   type TransactionMode,
   createIDBCore,
   createCacheMiddleware,
+  createHooksMiddleware,
 } from "./dbcore/index.js";
 import { Table, createTable } from "./table.js";
 import {
@@ -651,8 +652,13 @@ export class LessDB {
     // Start with the base IDB core
     let core: DBCore = createIDBCore(db, this.state.schemas);
 
-    // Built-in middleware (transaction-level cache)
-    const builtInMiddleware = [createCacheMiddleware()];
+    // Built-in middleware:
+    // - Cache middleware (level -1): Caches reads within transactions
+    // - Hooks middleware (level 0): Fires table hooks for CRUD operations
+    const builtInMiddleware = [
+      createCacheMiddleware(),
+      createHooksMiddleware(this.state.tableHooks),
+    ];
 
     // Combine built-in and user middleware, sorted by level
     const allMiddleware = [...builtInMiddleware, ...this.middleware].sort(
