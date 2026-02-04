@@ -79,7 +79,7 @@ export class Table<T, TKey> {
 
     if (result.numFailures > 0) {
       const firstError = result.failures?.[0];
-      throw firstError ?? new ConstraintError("Add operation failed");
+      throw new ConstraintError(firstError?.message ?? "Add operation failed", firstError);
     }
 
     const resultKey = result.results?.[0];
@@ -104,7 +104,7 @@ export class Table<T, TKey> {
 
     if (result.numFailures > 0) {
       const firstError = result.failures?.[0];
-      throw firstError ?? new ConstraintError("Put operation failed");
+      throw new ConstraintError(firstError?.message ?? "Put operation failed", firstError);
     }
 
     const resultKey = result.results?.[0];
@@ -173,7 +173,7 @@ export class Table<T, TKey> {
 
         if (result.numFailures > 0) {
           const firstError = result.failures?.[0];
-          throw firstError ?? new ConstraintError("Upsert update failed");
+          throw new ConstraintError(firstError?.message ?? "Upsert update failed", firstError);
         }
 
         return lookupKey;
@@ -192,7 +192,7 @@ export class Table<T, TKey> {
 
     if (result.numFailures > 0) {
       const firstError = result.failures?.[0];
-      throw firstError ?? new ConstraintError("Upsert add failed");
+      throw new ConstraintError(firstError?.message ?? "Upsert add failed", firstError);
     }
 
     const resultKey = result.results?.[0];

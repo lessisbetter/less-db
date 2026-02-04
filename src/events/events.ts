@@ -24,15 +24,26 @@ export class Event<T extends unknown[] = []> {
 
   /**
    * Fire the event, calling all listeners.
+   * All listeners are called even if some throw. If any listeners throw,
+   * an AggregateError is thrown after all listeners have been called.
    */
   fire(...args: T): void {
+    const errors: Error[] = [];
+
     for (const listener of this.listeners) {
       try {
         listener(...args);
       } catch (error) {
-        // Log but don't stop other listeners
-        console.error("Event listener error:", error);
+        errors.push(error instanceof Error ? error : new Error(String(error)));
       }
+    }
+
+    if (errors.length > 0) {
+      const firstMessage = errors[0]?.message ?? "Unknown error";
+      throw new AggregateError(
+        errors,
+        `${errors.length} event listener(s) threw errors. First: ${firstMessage}`,
+      );
     }
   }
 

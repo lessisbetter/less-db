@@ -22,6 +22,7 @@ import {
   extractKeyValue,
 } from "./dbcore/index.js";
 import { compareKeys } from "./compat/index.js";
+import { serializeKey } from "./utils/index.js";
 
 /**
  * Collection context - stores query state.
@@ -259,17 +260,6 @@ export class Collection<T, TKey> {
       const seenKeys = new Set<string>();
       const schema = ctx.table.schema;
 
-      // Helper to serialize keys with type prefixes (faster than JSON.stringify)
-      const serializeKey = (key: unknown): string => {
-        const type = typeof key;
-        if (type === "number") return `n:${key}`;
-        if (type === "string") return `s:${key}`;
-        if (type === "boolean") return `b:${key}`;
-        if (key === null) return "null";
-        if (key === undefined) return "undefined";
-        return `o:${JSON.stringify(key)}`;
-      };
-
       // Track seen keys from main result (extract from values)
       const mainKeys = extractPrimaryKeys(values, schema);
       for (const key of mainKeys) {
@@ -368,17 +358,6 @@ export class Collection<T, TKey> {
     // Handle OR contexts - merge results, deduplicate
     if (ctx.orContexts && ctx.orContexts.length > 0) {
       const seenKeys = new Set<string>();
-
-      // Helper to serialize keys (same fast-path logic as toArray)
-      const serializeKey = (key: unknown): string => {
-        const type = typeof key;
-        if (type === "number") return `n:${key}`;
-        if (type === "string") return `s:${key}`;
-        if (type === "boolean") return `b:${key}`;
-        if (key === null) return "null";
-        if (key === undefined) return "undefined";
-        return `o:${JSON.stringify(key)}`;
-      };
 
       // Track seen keys from main result
       for (const key of keys) {

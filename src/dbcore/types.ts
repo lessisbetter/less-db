@@ -33,15 +33,37 @@ export enum DBCoreRangeType {
  */
 export interface DBCoreKeyRange {
   readonly type: DBCoreRangeType;
-  /** Lower bound (for Range) or the value (for Equal/NotEqual) */
+  /**
+   * Lower bound (for Range) or the value (for Equal/NotEqual).
+   *
+   * For compound indexes, use an array of values matching the index key path.
+   * @example
+   * // For index "[userId+category]":
+   * // Exact match: lower = [1, "login"]
+   * // Range start: lower = [1, "a"]
+   */
   readonly lower?: unknown;
-  /** Upper bound (for Range) */
+  /**
+   * Upper bound (for Range).
+   *
+   * For compound indexes, use an array of values matching the index key path.
+   * @example
+   * // For index "[userId+category]":
+   * // Range end: upper = [1, "z"]
+   */
   readonly upper?: unknown;
-  /** Include lower bound in range */
+  /** Exclude lower bound from range (true = exclusive) */
   readonly lowerOpen?: boolean;
-  /** Include upper bound in range */
+  /** Exclude upper bound from range (true = exclusive) */
   readonly upperOpen?: boolean;
-  /** Set of values (for Any) */
+  /**
+   * Set of values for "anyOf" queries.
+   *
+   * For compound indexes, each value should be an array.
+   * @example
+   * // For index "[userId+category]":
+   * // values = [[1, "login"], [1, "click"], [2, "login"]]
+   */
   readonly values?: unknown[];
 }
 

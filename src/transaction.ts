@@ -4,17 +4,28 @@
 
 import type { DBCore, InternalTransaction, TransactionMode } from "./dbcore/index.js";
 import type { Table } from "./table.js";
-import { AbortError, InvalidTableError } from "./errors/index.js";
+import { AbortError, InvalidTableError, InvalidStateError } from "./errors/index.js";
 
 /**
  * Transaction modes (aliases supported).
+ * - "r" or "readonly": Read-only transaction
+ * - "rw" or "readwrite": Read-write transaction
  */
 export type TxMode = "r" | "readonly" | "rw" | "readwrite";
 
+/** Valid transaction mode values */
+const VALID_MODES = new Set<string>(["r", "readonly", "rw", "readwrite"]);
+
 /**
  * Normalize transaction mode to standard form.
+ * @throws InvalidStateError if mode is not a valid transaction mode
  */
 export function normalizeMode(mode: TxMode): TransactionMode {
+  if (!VALID_MODES.has(mode)) {
+    throw new InvalidStateError(
+      `Invalid transaction mode: "${mode}". Use "r", "readonly", "rw", or "readwrite".`,
+    );
+  }
   return mode === "r" || mode === "readonly" ? "readonly" : "readwrite";
 }
 

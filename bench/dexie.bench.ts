@@ -30,6 +30,8 @@ async function setupDb() {
 
 async function teardownDb() {
   db.close();
+  // Allow pending operations to complete before delete
+  await new Promise((resolve) => setTimeout(resolve, 0));
   await Dexie.delete(dbName);
 }
 
@@ -832,6 +834,8 @@ async function setupPeopleDb() {
 
 async function teardownPeopleDb() {
   peopleDb.close();
+  // Allow pending operations to complete before delete
+  await new Promise((resolve) => setTimeout(resolve, 0));
   await Dexie.delete(peopleDbName);
 }
 

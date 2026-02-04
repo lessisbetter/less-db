@@ -9,6 +9,7 @@ import {
   diffSchemas,
   type DatabaseSchema,
   type TableSchema,
+  type SchemaChange,
 } from "./schema-parser.js";
 import {
   type DBCore,
@@ -280,12 +281,10 @@ export class LessDB {
     oldVersion: number,
     newVersion: number,
   ): Promise<void> {
-    // Build schema for each version
     let currentSchema: DatabaseSchema = {};
 
     for (const versionDef of this.versions) {
       if (versionDef.version <= oldVersion) {
-        // Build up the schema state to the old version
         currentSchema = { ...currentSchema, ...parseStores(versionDef.stores) };
         continue;
       }
@@ -294,95 +293,112 @@ export class LessDB {
         break;
       }
 
-      // Parse new schema
       const newSchema = { ...currentSchema, ...parseStores(versionDef.stores) };
       const changes = diffSchemas(currentSchema, newSchema);
 
-      // Apply schema changes
       for (const change of changes) {
-        switch (change.type) {
-          case "add-table": {
-            const tableSchema = newSchema[change.tableName];
-            if (!tableSchema) {
-              throw new SchemaError(`Missing schema for table "${change.tableName}"`);
-            }
-            const storeOptions: IDBObjectStoreParameters = {};
-
-            if (tableSchema.primaryKey.keyPath) {
-              storeOptions.keyPath = tableSchema.primaryKey.keyPath;
-            }
-            if (tableSchema.primaryKey.auto) {
-              storeOptions.autoIncrement = true;
-            }
-
-            const store = db.createObjectStore(change.tableName, storeOptions);
-
-            // Create indexes
-            for (const idx of tableSchema.indexes) {
-              if (idx.keyPath) {
-                store.createIndex(idx.name, idx.keyPath, { unique: idx.unique });
-              }
-            }
-            break;
-          }
-
-          case "delete-table":
-            db.deleteObjectStore(change.tableName);
-            break;
-
-          case "add-index": {
-            if (!change.indexName || !change.spec?.keyPath) {
-              throw new SchemaError(`Invalid add-index change for table "${change.tableName}"`);
-            }
-            const store = transaction.objectStore(change.tableName);
-            store.createIndex(change.indexName, change.spec.keyPath, {
-              unique: change.spec.unique,
-            });
-            break;
-          }
-
-          case "delete-index": {
-            if (!change.indexName) {
-              throw new SchemaError(`Invalid delete-index change for table "${change.tableName}"`);
-            }
-            const store = transaction.objectStore(change.tableName);
-            store.deleteIndex(change.indexName);
-            break;
-          }
-
-          case "change-primary-key":
-            throw new SchemaError(
-              `Cannot change primary key of table "${change.tableName}". ` +
-                "Delete and recreate the table instead.",
-            );
-        }
+        this.applySchemaChange(db, transaction, change, newSchema);
       }
 
-      // Run upgrade function if provided
       if (versionDef.upgrade) {
-        // Create a temporary core for the upgrade transaction
-        const tempCore = createIDBCore(db, this.state.schemas);
-        const state: TransactionState = {
-          coreTrans: {
-            mode: "readwrite",
-            tables: Array.from(this.state.schemas.keys()),
-            idbTransaction: transaction,
-            abort: () => transaction.abort(),
-          },
-          core: tempCore,
-          active: true,
-          completion: Promise.resolve(),
-        };
-
-        const txContext = new TransactionContext(state, (name, state) =>
-          createTable(tempCore.table(name), () => state.coreTrans, this.getTableHooks(name)),
-        );
-
-        await versionDef.upgrade(txContext);
+        await this.runUpgradeFunction(db, transaction, versionDef.upgrade);
       }
 
       currentSchema = newSchema;
     }
+  }
+
+  /**
+   * Apply a single schema change during upgrade.
+   */
+  private applySchemaChange(
+    db: IDBDatabase,
+    transaction: IDBTransaction,
+    change: SchemaChange,
+    schema: DatabaseSchema,
+  ): void {
+    switch (change.type) {
+      case "add-table": {
+        const tableSchema = schema[change.tableName];
+        if (!tableSchema) {
+          throw new SchemaError(`Missing schema for table "${change.tableName}"`);
+        }
+
+        const storeOptions: IDBObjectStoreParameters = {};
+        if (tableSchema.primaryKey.keyPath) {
+          storeOptions.keyPath = tableSchema.primaryKey.keyPath;
+        }
+        if (tableSchema.primaryKey.auto) {
+          storeOptions.autoIncrement = true;
+        }
+
+        const store = db.createObjectStore(change.tableName, storeOptions);
+        for (const idx of tableSchema.indexes) {
+          if (idx.keyPath) {
+            store.createIndex(idx.name, idx.keyPath, { unique: idx.unique });
+          }
+        }
+        break;
+      }
+
+      case "delete-table":
+        db.deleteObjectStore(change.tableName);
+        break;
+
+      case "add-index": {
+        if (!change.indexName || !change.spec?.keyPath) {
+          throw new SchemaError(`Invalid add-index change for table "${change.tableName}"`);
+        }
+        const store = transaction.objectStore(change.tableName);
+        store.createIndex(change.indexName, change.spec.keyPath, {
+          unique: change.spec.unique,
+        });
+        break;
+      }
+
+      case "delete-index": {
+        if (!change.indexName) {
+          throw new SchemaError(`Invalid delete-index change for table "${change.tableName}"`);
+        }
+        const store = transaction.objectStore(change.tableName);
+        store.deleteIndex(change.indexName);
+        break;
+      }
+
+      case "change-primary-key":
+        throw new SchemaError(
+          `Cannot change primary key of table "${change.tableName}". ` +
+            "Delete and recreate the table instead.",
+        );
+    }
+  }
+
+  /**
+   * Run a user-provided upgrade function with the proper transaction context.
+   */
+  private async runUpgradeFunction(
+    db: IDBDatabase,
+    transaction: IDBTransaction,
+    upgrade: (tx: TransactionContext) => Promise<void> | void,
+  ): Promise<void> {
+    const tempCore = createIDBCore(db, this.state.schemas);
+    const state: TransactionState = {
+      coreTrans: {
+        mode: "readwrite",
+        tables: Array.from(this.state.schemas.keys()),
+        idbTransaction: transaction,
+        abort: () => transaction.abort(),
+      },
+      core: tempCore,
+      active: true,
+      completion: Promise.resolve(),
+    };
+
+    const txContext = new TransactionContext(state, (name, state) =>
+      createTable(tempCore.table(name), () => state.coreTrans, this.getTableHooks(name)),
+    );
+
+    await upgrade(txContext);
   }
 
   /**

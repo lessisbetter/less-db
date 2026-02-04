@@ -187,81 +187,134 @@ class IDBCoreTable implements DBCoreTable {
   async query(req: DBCoreQueryRequest): Promise<DBCoreQueryResponse> {
     const store = this.getStore(req.trans);
     const source = this.getIndex(store, req.query);
-    const idbRange = toIDBKeyRange(req.query.range);
-    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
-    const wantValues = req.values !== false;
 
-    const result: unknown[] = [];
-
-    // Handle "any of" queries by doing multiple queries IN PARALLEL
+    // Handle "any of" queries by doing multiple queries in parallel
     if (req.query.range.type === DBCoreRangeType.Any && req.query.range.values) {
-      const IDBKeyRange = getIDBKeyRange();
-      if (!IDBKeyRange) {
-        return { result: [] };
-      }
-
-      // Issue all queries in parallel for better performance
-      if (this.useGetAll && !req.offset) {
-        const promises = req.query.range.values.map((value) => {
-          const singleRange = IDBKeyRange.only(value);
-          return wantValues
-            ? promisifyRequest(source.getAll(singleRange, req.limit))
-            : promisifyRequest(source.getAllKeys(singleRange, req.limit));
-        });
-
-        const allResults = await Promise.all(promises);
-        for (const items of allResults) {
-          result.push(...items);
-          if (req.limit && result.length >= req.limit) {
-            break;
-          }
-        }
-      } else {
-        // Cursor-based queries must be sequential
-        for (const value of req.query.range.values) {
-          const singleRange = IDBKeyRange.only(value);
-          await this.cursorQuery(source, singleRange, direction, req, result, wantValues);
-
-          if (req.limit && result.length >= req.limit) {
-            break;
-          }
-        }
-      }
-
-      return { result: result.slice(0, req.limit) };
+      return this.queryAnyOf(source, req);
     }
 
     // Handle "not equal" with cursor and filter
     if (req.query.range.type === DBCoreRangeType.NotEqual) {
-      await this.cursorQuery(
-        source,
-        undefined,
-        direction,
-        req,
-        result,
-        wantValues,
-        (_value, _primaryKey, indexKey) => {
-          return compareKeys(indexKey, req.query.range.lower) !== 0;
-        },
-      );
-      return { result };
+      return this.queryNotEqual(source, req);
     }
 
     // If cursorAlgorithm is provided, use cursor-based iteration with jumping
     if (req.cursorAlgorithm) {
-      await this.cursorQueryWithAlgorithm(
-        source,
-        idbRange,
-        direction,
-        req,
-        result,
-        wantValues,
-        req.cursorAlgorithm,
-      );
-      return { result };
+      return this.queryWithCursorAlgorithm(source, req);
     }
 
-    // Standard query - use getAll/getAllKeys when available
+    // Standard query
+    return this.querySimple(source, req);
+  }
+
+  /**
+   * Handle "any of" queries by issuing multiple queries in parallel.
+   */
+  private async queryAnyOf(
+    source: IDBObjectStore | IDBIndex,
+    req: DBCoreQueryRequest,
+  ): Promise<DBCoreQueryResponse> {
+    const IDBKeyRange = getIDBKeyRange();
+    if (!IDBKeyRange) {
+      return { result: [] };
+    }
+
+    const values = req.query.range.values!;
+    const wantValues = req.values !== false;
+    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
+    const result: unknown[] = [];
+
+    if (this.useGetAll && !req.offset) {
+      const promises = values.map((value) => {
+        const singleRange = IDBKeyRange.only(value);
+        return wantValues
+          ? promisifyRequest(source.getAll(singleRange, req.limit))
+          : promisifyRequest(source.getAllKeys(singleRange, req.limit));
+      });
+
+      const allResults = await Promise.all(promises);
+      for (const items of allResults) {
+        result.push(...items);
+        if (req.limit && result.length >= req.limit) {
+          break;
+        }
+      }
+    } else {
+      // Cursor-based queries must be sequential
+      for (const value of values) {
+        const singleRange = IDBKeyRange.only(value);
+        await this.cursorQuery(source, singleRange, direction, req, result, wantValues);
+        if (req.limit && result.length >= req.limit) {
+          break;
+        }
+      }
+    }
+
+    return { result: result.slice(0, req.limit) };
+  }
+
+  /**
+   * Handle "not equal" queries with cursor and filter.
+   */
+  private async queryNotEqual(
+    source: IDBObjectStore | IDBIndex,
+    req: DBCoreQueryRequest,
+  ): Promise<DBCoreQueryResponse> {
+    const result: unknown[] = [];
+    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
+    const wantValues = req.values !== false;
+
+    await this.cursorQuery(
+      source,
+      undefined,
+      direction,
+      req,
+      result,
+      wantValues,
+      (_value, _primaryKey, indexKey) => {
+        return compareKeys(indexKey, req.query.range.lower) !== 0;
+      },
+    );
+
+    return { result };
+  }
+
+  /**
+   * Handle queries with cursor algorithm for optimized iteration with jumping.
+   */
+  private async queryWithCursorAlgorithm(
+    source: IDBObjectStore | IDBIndex,
+    req: DBCoreQueryRequest,
+  ): Promise<DBCoreQueryResponse> {
+    const result: unknown[] = [];
+    const idbRange = toIDBKeyRange(req.query.range);
+    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
+    const wantValues = req.values !== false;
+
+    await this.cursorQueryWithAlgorithm(
+      source,
+      idbRange,
+      direction,
+      req,
+      result,
+      wantValues,
+      req.cursorAlgorithm!,
+    );
+
+    return { result };
+  }
+
+  /**
+   * Standard query - uses getAll/getAllKeys when available, falls back to cursor.
+   */
+  private async querySimple(
+    source: IDBObjectStore | IDBIndex,
+    req: DBCoreQueryRequest,
+  ): Promise<DBCoreQueryResponse> {
+    const idbRange = toIDBKeyRange(req.query.range);
+    const wantValues = req.values !== false;
+
+    // Use getAll/getAllKeys when available and applicable
     if (this.useGetAll && !req.offset && !req.unique && !req.reverse) {
       const items = wantValues
         ? await promisifyRequest(source.getAll(idbRange, req.limit))
@@ -270,6 +323,8 @@ class IDBCoreTable implements DBCoreTable {
     }
 
     // Fall back to cursor
+    const result: unknown[] = [];
+    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
     await this.cursorQuery(source, idbRange, direction, req, result, wantValues);
     return { result };
   }

@@ -25,6 +25,20 @@ function simpleCompareReverse(a: string, b: string): number {
  * Calculate the next possible key that could match the case-insensitive pattern.
  * This is the core optimization that enables cursor jumping.
  *
+ * The algorithm works by finding where the current key diverges from the needle,
+ * then constructing the smallest possible key that:
+ * 1. Is greater than the current key (for forward iteration)
+ * 2. Could still match the case-insensitive needle
+ *
+ * For example, searching for "ABC" (case-insensitive):
+ * - If cursor is at "AAA", next possible match is "ABC" (uppercase A→B→C)
+ * - If cursor is at "ABD", next possible match is "AbC" (try lowercase b)
+ * - If cursor is at "abd", no more matches possible (return null)
+ *
+ * The key insight is that for case-insensitive matching, valid characters
+ * at each position form a range [upperChar, lowerChar]. We navigate this
+ * space efficiently by calculating the minimum jump needed.
+ *
  * @param key - The current key from the cursor
  * @param lowerKey - The lowercase version of the current key
  * @param upperNeedle - The uppercase version of the search needle
@@ -162,7 +176,10 @@ export function createIgnoreCaseAlgorithm(
       if (casing === null && lowestPossibleCasing === null) {
         // No possible match for this needle, skip it in future iterations
         state.firstPossibleNeedle = i + 1;
-      } else if (lowestPossibleCasing === null || state.compare(lowestPossibleCasing, casing!) > 0) {
+      } else if (
+        lowestPossibleCasing === null ||
+        state.compare(lowestPossibleCasing, casing!) > 0
+      ) {
         lowestPossibleCasing = casing;
       }
     }
@@ -190,8 +207,6 @@ export function createEqualsIgnoreCaseAlgorithm(
   lowerBound: string;
   upperBound: string;
 } {
-  const lowerValue = value.toLowerCase();
-
   return createIgnoreCaseAlgorithm(
     [value],
     (lowerKey, lowerNeedles) => lowerKey === lowerNeedles[0],
@@ -211,8 +226,6 @@ export function createStartsWithIgnoreCaseAlgorithm(
   lowerBound: string;
   upperBound: string;
 } {
-  const lowerPrefix = prefix.toLowerCase();
-
   return createIgnoreCaseAlgorithm(
     [prefix],
     (lowerKey, lowerNeedles) => lowerKey.startsWith(lowerNeedles[0]!),
@@ -236,7 +249,7 @@ export function createAnyOfIgnoreCaseAlgorithm(
 
   return createIgnoreCaseAlgorithm(
     values,
-    (lowerKey, _lowerNeedles, firstPossible) => {
+    (lowerKey) => {
       // For anyOf, check if the key matches any of the values
       return lowerValuesSet.has(lowerKey);
     },

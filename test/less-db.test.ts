@@ -3148,12 +3148,7 @@ describe("LessDB", () => {
 
       it("handles single character strings", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "a" },
-          { name: "A" },
-          { name: "b" },
-          { name: "B" },
-        ]);
+        await items.bulkAdd([{ name: "a" }, { name: "A" }, { name: "b" }, { name: "B" }]);
 
         const results = await items.where("name").equalsIgnoreCase("a").toArray();
 
@@ -3180,11 +3175,7 @@ describe("LessDB", () => {
 
       it("returns empty array when no matches exist", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "apple" },
-          { name: "banana" },
-          { name: "cherry" },
-        ]);
+        await items.bulkAdd([{ name: "apple" }, { name: "banana" }, { name: "cherry" }]);
 
         const results = await items.where("name").equalsIgnoreCase("orange").toArray();
 
@@ -3289,11 +3280,7 @@ describe("LessDB", () => {
 
       it("works with offset", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "hello" },
-          { name: "Hello" },
-          { name: "HELLO" },
-        ]);
+        await items.bulkAdd([{ name: "hello" }, { name: "Hello" }, { name: "HELLO" }]);
 
         const allResults = await items.where("name").equalsIgnoreCase("hello").toArray();
         const offsetResults = await items
@@ -3321,11 +3308,7 @@ describe("LessDB", () => {
 
       it("works with first", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "hello" },
-          { name: "Hello" },
-          { name: "HELLO" },
-        ]);
+        await items.bulkAdd([{ name: "hello" }, { name: "Hello" }, { name: "HELLO" }]);
 
         const first = await items.where("name").equalsIgnoreCase("hello").first();
 
@@ -3427,11 +3410,7 @@ describe("LessDB", () => {
 
       it("works with limit", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "hello1" },
-          { name: "Hello2" },
-          { name: "HELLO3" },
-        ]);
+        await items.bulkAdd([{ name: "hello1" }, { name: "Hello2" }, { name: "HELLO3" }]);
 
         const results = await items.where("name").startsWithIgnoreCase("hello").limit(2).toArray();
 
@@ -3457,11 +3436,7 @@ describe("LessDB", () => {
 
       it("handles single value (should use equalsIgnoreCase path)", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "test" },
-          { name: "TEST" },
-          { name: "Test" },
-        ]);
+        await items.bulkAdd([{ name: "test" }, { name: "TEST" }, { name: "Test" }]);
 
         const results = await items.where("name").anyOfIgnoreCase(["test"]).toArray();
 
@@ -3494,20 +3469,14 @@ describe("LessDB", () => {
           { name: "avocado" },
         ]);
 
-        const results = await items
-          .where("name")
-          .anyOfIgnoreCase(["apple", "apricot"])
-          .toArray();
+        const results = await items.where("name").anyOfIgnoreCase(["apple", "apricot"]).toArray();
 
         expect(results).toHaveLength(4);
       });
 
       it("returns empty for no matches", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "apple" },
-          { name: "banana" },
-        ]);
+        await items.bulkAdd([{ name: "apple" }, { name: "banana" }]);
 
         const results = await items.where("name").anyOfIgnoreCase(["cherry", "date"]).toArray();
 
@@ -3518,7 +3487,11 @@ describe("LessDB", () => {
         const items = db.table<Item, number>("items");
         const names = ["alpha", "beta", "gamma", "delta", "epsilon"];
         await items.bulkAdd(
-          names.flatMap((n) => [{ name: n }, { name: n.toUpperCase() }, { name: n[0]!.toUpperCase() + n.slice(1) }]),
+          names.flatMap((n) => [
+            { name: n },
+            { name: n.toUpperCase() },
+            { name: n[0]!.toUpperCase() + n.slice(1) },
+          ]),
         );
 
         const results = await items.where("name").anyOfIgnoreCase(names).toArray();
@@ -3530,11 +3503,7 @@ describe("LessDB", () => {
     describe("cursor algorithm with filter chaining", () => {
       it("equalsIgnoreCase with additional filter", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "hello" },
-          { name: "Hello" },
-          { name: "HELLO" },
-        ]);
+        await items.bulkAdd([{ name: "hello" }, { name: "Hello" }, { name: "HELLO" }]);
 
         // The cursor algorithm should work, then filter is applied post-hoc
         const results = await items
@@ -3576,7 +3545,10 @@ describe("LessDB", () => {
           { name: "world" },
         ]);
 
-        const count = await items.where("name").equalsIgnoreCase("hello").modify({ name: "updated" });
+        const count = await items
+          .where("name")
+          .equalsIgnoreCase("hello")
+          .modify({ name: "updated" });
 
         expect(count).toBe(3);
 
@@ -3687,10 +3659,7 @@ describe("LessDB", () => {
 
       it("handles only uppercase match", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "HELLO" },
-          { name: "world" },
-        ]);
+        await items.bulkAdd([{ name: "HELLO" }, { name: "world" }]);
 
         const results = await items.where("name").equalsIgnoreCase("hello").toArray();
 
@@ -3700,10 +3669,7 @@ describe("LessDB", () => {
 
       it("handles only lowercase match", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "hello" },
-          { name: "WORLD" },
-        ]);
+        await items.bulkAdd([{ name: "hello" }, { name: "WORLD" }]);
 
         const results = await items.where("name").equalsIgnoreCase("hello").toArray();
 
@@ -3713,11 +3679,7 @@ describe("LessDB", () => {
 
       it("handles alternating case pattern", async () => {
         const items = db.table<Item, number>("items");
-        await items.bulkAdd([
-          { name: "HeLLo" },
-          { name: "hElLo" },
-          { name: "hELLo" },
-        ]);
+        await items.bulkAdd([{ name: "HeLLo" }, { name: "hElLo" }, { name: "hELLo" }]);
 
         const results = await items.where("name").equalsIgnoreCase("hello").toArray();
 
@@ -3780,11 +3742,7 @@ describe("LessDB", () => {
       it("handles unicode letters with case", async () => {
         const items = db.table<Item, number>("items");
         // Note: JavaScript's toUpperCase/toLowerCase handle some unicode
-        await items.bulkAdd([
-          { name: "café" },
-          { name: "CAFÉ" },
-          { name: "Café" },
-        ]);
+        await items.bulkAdd([{ name: "café" }, { name: "CAFÉ" }, { name: "Café" }]);
 
         const results = await items.where("name").equalsIgnoreCase("café").toArray();
 

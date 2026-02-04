@@ -45,26 +45,60 @@ describe("events", () => {
       expect(listener).toHaveBeenCalledWith("first");
     });
 
-    it("handles listener errors gracefully", () => {
+    it("calls all listeners even when some throw, then throws AggregateError", () => {
       const event = new Event<[]>();
       const errorListener = vi.fn(() => {
         throw new Error("test error");
       });
       const normalListener = vi.fn();
 
-      // Suppress console.error for this test
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      event.subscribe(errorListener);
+      event.subscribe(normalListener);
+
+      expect(() => event.fire()).toThrow(AggregateError);
+      expect(errorListener).toHaveBeenCalled();
+      expect(normalListener).toHaveBeenCalled(); // Still called despite error
+    });
+
+    it("throws AggregateError with all listener errors and helpful message", () => {
+      const event = new Event<[]>();
+
+      event.subscribe(() => {
+        throw new Error("error 1");
+      });
+      event.subscribe(() => {
+        throw new Error("error 2");
+      });
 
       try {
-        event.subscribe(errorListener);
-        event.subscribe(normalListener);
         event.fire();
+        expect.fail("Should have thrown");
+      } catch (e) {
+        expect(e).toBeInstanceOf(AggregateError);
+        const aggError = e as AggregateError;
+        expect(aggError.errors).toHaveLength(2);
+        expect(aggError.errors[0].message).toBe("error 1");
+        expect(aggError.errors[1].message).toBe("error 2");
+        expect(aggError.message).toContain("2 event listener(s) threw errors");
+        expect(aggError.message).toContain("First: error 1");
+      }
+    });
 
-        expect(errorListener).toHaveBeenCalled();
-        expect(normalListener).toHaveBeenCalled(); // Still called despite error
-        expect(consoleSpy).toHaveBeenCalled();
-      } finally {
-        consoleSpy.mockRestore();
+    it("converts non-Error throws to Error instances", () => {
+      const event = new Event<[]>();
+
+      event.subscribe(() => {
+        throw "string error";
+      });
+
+      try {
+        event.fire();
+        expect.fail("Should have thrown");
+      } catch (e) {
+        expect(e).toBeInstanceOf(AggregateError);
+        const aggError = e as AggregateError;
+        expect(aggError.errors[0]).toBeInstanceOf(Error);
+        expect(aggError.errors[0].message).toBe("string error");
       }
     });
 

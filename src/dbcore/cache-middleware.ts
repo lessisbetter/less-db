@@ -16,9 +16,10 @@ import type {
   DBCoreMutateRequest,
   DBCoreMutateResponse,
 } from "./types.js";
+import { serializeKey } from "../utils/index.js";
 
-/** Symbol for accessing the transaction cache */
-const CACHE_KEY = "_cache";
+/** Symbol for accessing the transaction cache - avoids property name collisions */
+const CACHE_KEY = Symbol("lessdb.cache");
 
 /** Cache entry for a table */
 interface TableCache {
@@ -35,10 +36,11 @@ interface TransactionCache {
  * Get or create the cache on a transaction.
  */
 function getTransactionCache(trans: DBCoreTransaction): TransactionCache {
-  let cache = (trans as unknown as Record<string, TransactionCache>)[CACHE_KEY];
+  const transWithCache = trans as unknown as { [CACHE_KEY]?: TransactionCache };
+  let cache = transWithCache[CACHE_KEY];
   if (!cache) {
     cache = {};
-    (trans as unknown as Record<string, TransactionCache>)[CACHE_KEY] = cache;
+    transWithCache[CACHE_KEY] = cache;
   }
   return cache;
 }
@@ -53,24 +55,6 @@ function getTableCache(transCache: TransactionCache, tableName: string): TableCa
     transCache[tableName] = tableCache;
   }
   return tableCache;
-}
-
-/**
- * Serialize a key for use as a Map key.
- * Fast-paths primitives to avoid JSON.stringify overhead.
- * Uses type prefixes to avoid collisions (e.g., numeric 1 vs string "1").
- */
-function serializeKey(key: unknown): string {
-  // Fast path for common primitive types
-  const type = typeof key;
-  if (type === "number") return `n:${key}`;
-  if (type === "string") return `s:${key}`;
-  if (type === "boolean") return `b:${key}`;
-  if (key === null) return "null";
-  if (key === undefined) return "undefined";
-
-  // Slow path for objects, arrays, dates, etc.
-  return `o:${JSON.stringify(key)}`;
 }
 
 /**
