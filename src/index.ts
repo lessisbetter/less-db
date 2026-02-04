@@ -83,6 +83,13 @@ export {
   keyRangeAbove,
   keyRangeBelow,
   createIDBCore,
+  // Middleware factories
+  createCacheMiddleware,
+  createLoggingMiddleware,
+  type LogLevel,
+  type LogEntry,
+  type LogHandler,
+  type LoggingMiddlewareOptions,
 } from "./dbcore/index.js";
 
 // Compatibility utilities
