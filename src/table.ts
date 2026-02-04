@@ -251,10 +251,12 @@ export class Table<T, TKey> {
   async bulkAdd(items: T[], keys?: TKey[]): Promise<TKey[]> {
     const trans = this._getTransaction();
 
-    // Fire creating hooks
-    items.forEach((item, i) => {
-      this.hook.creating.fire(keys?.[i], item);
-    });
+    // Fire creating hooks (only if there are handlers)
+    if (this.hook.creating.hasHandlers()) {
+      for (let i = 0; i < items.length; i++) {
+        this.hook.creating.fire(keys?.[i], items[i]!);
+      }
+    }
 
     const result = await this._coreTable.mutate({
       type: "add",
@@ -312,11 +314,16 @@ export class Table<T, TKey> {
 
     // Prepare updates for items that exist
     const updates: { key: TKey; value: T }[] = [];
+    const hasUpdatingHook = this.hook.updating.hasHandlers();
+
     for (let i = 0; i < keysAndChanges.length; i++) {
       const existing = existingItems[i];
       const item = keysAndChanges[i];
       if (existing !== undefined && item !== undefined) {
-        this.hook.updating.fire(item.changes, item.key, existing);
+        // Only fire hook if there are handlers
+        if (hasUpdatingHook) {
+          this.hook.updating.fire(item.changes, item.key, existing);
+        }
         const merged = { ...existing, ...item.changes } as T;
         updates.push({ key: item.key, value: merged });
       }

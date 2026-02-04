@@ -15,6 +15,7 @@ import {
   type DBCoreTransaction,
   type TransactionMode,
   createIDBCore,
+  createCacheMiddleware,
 } from "./dbcore/index.js";
 import { Table, createTable } from "./table.js";
 import {
@@ -634,10 +635,18 @@ export class LessDB {
     // Start with the base IDB core
     let core: DBCore = createIDBCore(db, this.state.schemas);
 
+    // Built-in middleware (transaction-level cache)
+    const builtInMiddleware = [createCacheMiddleware()];
+
+    // Combine built-in and user middleware, sorted by level
+    const allMiddleware = [...builtInMiddleware, ...this.middleware].sort(
+      (a, b) => (a.level ?? 10) - (b.level ?? 10),
+    );
+
     // Apply middleware in level order (lowest to highest)
     // This means lowest level middleware is closest to IndexedDB
     // Each middleware returns a partial DBCore that is merged with the downstream
-    for (const mw of this.middleware) {
+    for (const mw of allMiddleware) {
       const partialCore = mw.create(core);
       const downCore = core;
       // Merge partial onto a new object that delegates to downCore for missing methods
