@@ -37,18 +37,29 @@ export {
   type TableHooks,
 } from "./events/index.js";
 
+// Promise with type-based error catching
+export { LessDBPromise, wrapPromise, resolvedPromise, rejectedPromise } from "./promise.js";
+
 // Errors
 export {
   LessDBError,
+  AbortError,
+  BlockedError,
   ConstraintError,
-  NotFoundError,
+  DatabaseClosedError,
+  DataCloneError,
+  DataError,
+  InvalidAccessError,
   InvalidStateError,
   InvalidTableError,
-  DataError,
-  AbortError,
   MissingAPIError,
+  NotFoundError,
+  OpenFailedError,
+  QuotaExceededError,
+  ReadOnlyError,
   SchemaError,
-  BlockedError,
+  TimeoutError,
+  TransactionInactiveError,
   VersionChangeError,
   mapError,
 } from "./errors/index.js";

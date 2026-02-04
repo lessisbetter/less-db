@@ -182,34 +182,25 @@ await db.users.add({ name: "Alice" }); // Auto-creates readwrite transaction
 - [x] `TransactionInactiveError` - Transaction no longer active
 - [x] `VersionChangeError` - Version change detected
 
-##### 4.2.2 Type-Based Error Catching
+##### 4.2.2 Type-Based Error Catching ✅ DONE
 
 **Goal**: Enable `promise.catch(ErrorType, handler)` pattern.
 
-**Dexie reference**: `src/helpers/promise.ts` - Promise extension
+**Implementation** (`src/promise.ts`):
 
-**Implementation tasks**:
+- [x] `LessDBPromise<T>` class extending Promise
+- [x] Overloaded `.catch()` that accepts error constructor as first arg
+- [x] Type checking in catch handler - matches error instances
+- [x] Chain multiple type-based catches correctly
+- [x] All Table methods return LessDBPromise
+- [x] Tests in `test/promise.test.ts` (27 tests)
 
-- [ ] Create `LessDBPromise<T>` class extending Promise
-- [ ] Add overloaded `.catch()` that accepts error constructor as first arg
-- [ ] Implement type checking in catch handler
-- [ ] Chain multiple type-based catches correctly
-- [ ] Return all promises from Table/Collection methods as LessDBPromise
-- [ ] Add tests for type-based catching chains
-
-**Example**:
+**Usage**:
 
 ```typescript
-class LessDBPromise<T> extends Promise<T> {
-  catch<E extends Error, TResult = never>(
-    ErrorType: new (...args: any[]) => E,
-    onrejected: (error: E) => TResult | PromiseLike<TResult>,
-  ): LessDBPromise<T | TResult>;
-
-  catch<TResult = never>(
-    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null,
-  ): LessDBPromise<T | TResult>;
-}
+db.users.add(user)
+  .catch(ConstraintError, err => console.log("Duplicate!"))
+  .catch(err => console.log("Other error"));
 ```
 
 ##### 4.2.3 Error Mapping ✅ DONE

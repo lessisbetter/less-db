@@ -11,8 +11,15 @@
  * Based on analysis of Dexie.js test suite and common real-world issues.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { LessDB, ConstraintError, InvalidTableError } from "../src/index.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  LessDB,
+  ConstraintError,
+  InvalidTableError,
+  NotFoundError,
+  DataError,
+  LessDBPromise,
+} from "../src/index.js";
 import { generateDbName, cleanupDB } from "./helpers/setup.js";
 
 // ============================================================================
@@ -1027,5 +1034,96 @@ describe("database lifecycle edge cases", () => {
 
       await cleanupDB(db);
     });
+  });
+});
+
+// ============================================================================
+// Type-Based Error Catching (LessDBPromise)
+// ============================================================================
+
+describe("type-based error catching", () => {
+  let db: LessDB;
+
+  beforeEach(async () => {
+    db = new LessDB(generateDbName("promise-test"));
+    db.version(1).stores({
+      users: "++id, name, &email",
+    });
+    await db.open();
+  });
+
+  afterEach(async () => {
+    await cleanupDB(db);
+  });
+
+  it("Table methods return LessDBPromise", () => {
+    const users = db.table<User, number>("users");
+
+    expect(users.get(1)).toBeInstanceOf(LessDBPromise);
+    expect(users.add({ name: "Test", email: "test@test.com" })).toBeInstanceOf(LessDBPromise);
+    expect(users.put({ name: "Test", email: "test2@test.com" })).toBeInstanceOf(LessDBPromise);
+    expect(users.bulkGet([1, 2])).toBeInstanceOf(LessDBPromise);
+    expect(users.count()).toBeInstanceOf(LessDBPromise);
+    expect(users.toArray()).toBeInstanceOf(LessDBPromise);
+  });
+
+  it("chains then() on successful operations", async () => {
+    const users = db.table<User, number>("users");
+
+    const id = await users
+      .add({ name: "Alice", email: "alice@test.com" })
+      .then((id) => id * 10);
+
+    expect(id).toBeGreaterThan(0);
+  });
+
+  it("catch() with no type catches any error", async () => {
+    const users = db.table<User, number>("users");
+    await users.add({ name: "Alice", email: "alice@test.com" });
+
+    // Standard catch should work
+    const result = await users
+      .add({ name: "Dupe", email: "alice@test.com" })
+      .catch(() => -1);
+
+    expect(result).toBe(-1);
+  });
+
+  it("type-based catch matches error type (via standard promise)", async () => {
+    const users = db.table<User, number>("users");
+    await users.add({ name: "Alice", email: "alice@test.com" });
+
+    // Use standard await + catch to verify the error type
+    let wasConstraintError = false;
+    try {
+      await users.add({ name: "Dupe", email: "alice@test.com" });
+    } catch (err) {
+      wasConstraintError = err instanceof ConstraintError;
+    }
+
+    expect(wasConstraintError).toBe(true);
+  });
+
+  it("finally() executes on success", async () => {
+    const users = db.table<User, number>("users");
+    const cleanup = vi.fn();
+
+    await users.add({ name: "Alice", email: "alice@test.com" }).finally(cleanup);
+
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("finally() executes on error", async () => {
+    const users = db.table<User, number>("users");
+    await users.add({ name: "Alice", email: "alice@test.com" });
+
+    const cleanup = vi.fn();
+
+    await users
+      .add({ name: "Dupe", email: "alice@test.com" })
+      .catch(() => -1)
+      .finally(cleanup);
+
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 });
