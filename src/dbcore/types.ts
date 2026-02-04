@@ -75,8 +75,8 @@ export interface InternalTransaction extends DBCoreTransaction {
 export interface DBCoreIndex {
   /** Index name, or empty string for primary key */
   readonly name: string;
-  /** Key path */
-  readonly keyPath: string | null;
+  /** Key path - string for single field, string[] for compound indexes */
+  readonly keyPath: string | string[] | null;
   /** Whether this is the primary key */
   readonly isPrimaryKey?: boolean;
   /** Whether keys are auto-generated */
@@ -443,7 +443,7 @@ export function keyRangeAll(): DBCoreKeyRange {
  */
 export function toDBCoreIndex(
   name: string,
-  keyPath: string | null,
+  keyPath: string | string[] | null,
   options?: { isPrimaryKey?: boolean; autoIncrement?: boolean; unique?: boolean },
 ): DBCoreIndex {
   return {
@@ -499,16 +499,30 @@ export function indexQuery(
 }
 
 /**
- * Extract primary key from a value using the schema's keyPath.
- * Returns undefined for outbound keys (keyPath is null).
+ * Extract a value using a keyPath (handles both single field and compound).
+ * For compound keyPaths, returns an array of values.
  */
-export function extractPrimaryKey(value: unknown, schema: DBCoreTableSchema): unknown {
-  const keyPath = schema.primaryKey.keyPath;
-  if (keyPath === null) {
-    // Outbound key - can't extract from value
+export function extractKeyValue(value: unknown, keyPath: string | string[] | null): unknown {
+  if (keyPath === null || value === null || typeof value !== "object") {
     return undefined;
   }
-  return (value as Record<string, unknown>)[keyPath];
+
+  if (typeof keyPath === "string") {
+    // Single field
+    return (value as Record<string, unknown>)[keyPath];
+  }
+
+  // Compound keyPath - return array of values
+  return keyPath.map((field) => (value as Record<string, unknown>)[field]);
+}
+
+/**
+ * Extract primary key from a value using the schema's keyPath.
+ * Returns undefined for outbound keys (keyPath is null).
+ * Note: Compound primary keys return an array of values.
+ */
+export function extractPrimaryKey(value: unknown, schema: DBCoreTableSchema): unknown {
+  return extractKeyValue(value, schema.primaryKey.keyPath);
 }
 
 /**
@@ -520,5 +534,5 @@ export function extractPrimaryKeys(values: unknown[], schema: DBCoreTableSchema)
     // Outbound keys - can't extract
     return values.map(() => undefined);
   }
-  return values.map((v) => (v as Record<string, unknown>)[keyPath]);
+  return values.map((v) => extractKeyValue(v, keyPath));
 }

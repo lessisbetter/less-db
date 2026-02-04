@@ -91,6 +91,75 @@ describe("schema-parser", () => {
       });
     });
 
+    describe("compound index parsing", () => {
+      it("parses compound index with two fields", () => {
+        const schema = parseTableSchema("users", "++id, [firstName+lastName]");
+        expect(schema.indexes).toHaveLength(1);
+        expect(schema.indexes[0].name).toBe("firstName+lastName");
+        expect(schema.indexes[0].keyPath).toEqual(["firstName", "lastName"]);
+        expect(schema.indexes[0].compound).toBe(true);
+        expect(schema.indexes[0].unique).toBe(false);
+      });
+
+      it("parses compound index with three fields", () => {
+        const schema = parseTableSchema("events", "++id, [year+month+day]");
+        expect(schema.indexes).toHaveLength(1);
+        expect(schema.indexes[0].name).toBe("year+month+day");
+        expect(schema.indexes[0].keyPath).toEqual(["year", "month", "day"]);
+        expect(schema.indexes[0].compound).toBe(true);
+      });
+
+      it("parses unique compound index", () => {
+        const schema = parseTableSchema("users", "++id, &[email+domain]");
+        expect(schema.indexes).toHaveLength(1);
+        expect(schema.indexes[0].name).toBe("email+domain");
+        expect(schema.indexes[0].keyPath).toEqual(["email", "domain"]);
+        expect(schema.indexes[0].compound).toBe(true);
+        expect(schema.indexes[0].unique).toBe(true);
+      });
+
+      it("parses mixed compound and simple indexes", () => {
+        const schema = parseTableSchema("users", "++id, name, [firstName+lastName], &email");
+        expect(schema.indexes).toHaveLength(3);
+        expect(schema.indexes[0].name).toBe("name");
+        expect(schema.indexes[0].compound).toBe(false);
+        expect(schema.indexes[1].name).toBe("firstName+lastName");
+        expect(schema.indexes[1].compound).toBe(true);
+        expect(schema.indexes[2].name).toBe("email");
+        expect(schema.indexes[2].compound).toBe(false);
+      });
+
+      it("handles whitespace in compound index", () => {
+        const schema = parseTableSchema("users", "++id, [ firstName + lastName ]");
+        expect(schema.indexes[0].name).toBe("firstName+lastName");
+        expect(schema.indexes[0].keyPath).toEqual(["firstName", "lastName"]);
+      });
+
+      it("throws on empty compound index", () => {
+        expect(() => parseTableSchema("users", "++id, []")).toThrow(SchemaError);
+      });
+
+      it("throws on single-field compound index", () => {
+        expect(() => parseTableSchema("users", "++id, [name]")).toThrow(SchemaError);
+      });
+
+      it("throws on empty field in compound index", () => {
+        expect(() => parseTableSchema("users", "++id, [firstName+]")).toThrow(SchemaError);
+        expect(() => parseTableSchema("users", "++id, [+lastName]")).toThrow(SchemaError);
+        expect(() => parseTableSchema("users", "++id, [first++last]")).toThrow(SchemaError);
+      });
+
+      it("throws on invalid field name in compound index", () => {
+        expect(() => parseTableSchema("users", "++id, [first-name+lastName]")).toThrow(SchemaError);
+        expect(() => parseTableSchema("users", "++id, [123+lastName]")).toThrow(SchemaError);
+      });
+
+      it("allows underscores in compound index field names", () => {
+        const schema = parseTableSchema("users", "++id, [first_name+last_name]");
+        expect(schema.indexes[0].keyPath).toEqual(["first_name", "last_name"]);
+      });
+    });
+
     describe("whitespace handling", () => {
       it("handles extra whitespace", () => {
         const schema = parseTableSchema("users", "  ++id  ,  name  ,  email  ");

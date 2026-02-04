@@ -3,7 +3,7 @@
  */
 
 import type { DBCoreTable, DBCoreTransaction, DBCoreTableSchema } from "./dbcore/index.js";
-import { keyRangeAll, primaryKeyQuery } from "./dbcore/index.js";
+import { keyRangeAll, primaryKeyQuery, extractKeyValue } from "./dbcore/index.js";
 import { Collection, createCollectionContext } from "./collection.js";
 import { WhereClause } from "./where-clause.js";
 import { createTableHooks, type TableHooks } from "./events/index.js";
@@ -65,8 +65,10 @@ export class Table<T, TKey> {
   async add(item: T, key?: TKey): Promise<TKey> {
     const trans = this._getTransaction();
 
-    // Fire creating hook
-    this.hook.creating.fire(key, item);
+    // Fire creating hook only if there are handlers
+    if (this.hook.creating.hasHandlers()) {
+      this.hook.creating.fire(key, item);
+    }
 
     const result = await this._coreTable.mutate({
       type: "add",
@@ -151,8 +153,7 @@ export class Table<T, TKey> {
 
     // Determine the key to check
     const keyPath = this.schema.primaryKey.keyPath;
-    const lookupKey =
-      key ?? (keyPath ? ((item as Record<string, unknown>)[keyPath] as TKey) : undefined);
+    const lookupKey = key ?? (keyPath ? (extractKeyValue(item, keyPath) as TKey) : undefined);
 
     if (lookupKey !== undefined) {
       // Try to get existing item

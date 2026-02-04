@@ -11,6 +11,7 @@ import {
   keyRangeAbove,
   keyRangeBelow,
   DBCoreRangeType,
+  extractKeyValue,
 } from "./dbcore/index.js";
 import { Collection, type CollectionContext } from "./collection.js";
 import { compareKeys } from "./compat/index.js";
@@ -92,8 +93,8 @@ export class WhereClause<T, TKey> {
       return this.toCollection(keyRangeAll());
     }
 
-    // Use filter for this
-    const valueSet = new Set(values);
+    // For compound indexes, values may be arrays - serialize for comparison
+    const serializedValues = new Set(values.map((v) => JSON.stringify(v)));
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
@@ -101,7 +102,7 @@ export class WhereClause<T, TKey> {
       filter: (item: unknown) => {
         // Get the indexed value from the item
         const indexValue = this.getIndexValue(item);
-        return !valueSet.has(indexValue);
+        return !serializedValues.has(JSON.stringify(indexValue));
       },
       reverse: false,
       unique: false,
@@ -112,17 +113,23 @@ export class WhereClause<T, TKey> {
 
   /**
    * Get the indexed value from an item.
+   * For compound indexes, returns an array of values.
    */
   private getIndexValue(item: unknown): unknown {
     if (!item || typeof item !== "object") return undefined;
 
     // Handle primary key
     if (!this.indexName) {
-      const keyPath = this.table.schema.primaryKey.keyPath;
-      if (!keyPath) return undefined;
-      return (item as Record<string, unknown>)[keyPath];
+      return extractKeyValue(item, this.table.schema.primaryKey.keyPath);
     }
 
+    // Find the index spec to get its keyPath
+    const indexSpec = this.table.schema.indexes.find((idx) => idx.name === this.indexName);
+    if (indexSpec) {
+      return extractKeyValue(item, indexSpec.keyPath);
+    }
+
+    // Fall back to treating indexName as a single field
     return (item as Record<string, unknown>)[this.indexName];
   }
 
@@ -185,13 +192,24 @@ export class WhereClause<T, TKey> {
    * Match strings that start with the given prefix (case-insensitive).
    */
   startsWithIgnoreCase(prefix: string): Collection<T, TKey> {
-    const lowerPrefix = prefix.toLowerCase();
+    if (prefix === "") {
+      return this.toCollection(keyRangeAll());
+    }
 
-    // Use filter for case-insensitive matching
+    const lowerPrefix = prefix.toLowerCase();
+    const upperPrefix = prefix.toUpperCase();
+
+    // Optimize: Use a range query to reduce scanned keys
+    // In IndexedDB, uppercase sorts before lowercase: "A"..."Z" < "a"..."z"
+    // So for "abc", we query from "ABC" to "abcz" to catch all case variations
+    const lowerBound = upperPrefix;
+    const upperChar = lowerPrefix.charAt(lowerPrefix.length - 1);
+    const upperBound = lowerPrefix.slice(0, -1) + String.fromCharCode(upperChar.charCodeAt(0) + 1);
+
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(lowerBound, upperBound, false, true),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -208,12 +226,24 @@ export class WhereClause<T, TKey> {
    * Match strings that equal the given value (case-insensitive).
    */
   equalsIgnoreCase(value: string): Collection<T, TKey> {
+    if (value === "") {
+      return this.equals("");
+    }
+
     const lowerValue = value.toLowerCase();
+    const upperValue = value.toUpperCase();
+
+    // Optimize: Use a range query to limit scanned keys
+    // Query from uppercase version to lowercase version + next char
+    // This covers all case variations (e.g., "ABC" to "abcz" for "abc")
+    const lowerBound = upperValue;
+    const lastChar = lowerValue.charAt(lowerValue.length - 1);
+    const upperBound = lowerValue.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
 
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(lowerBound, upperBound, false, true),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -243,12 +273,45 @@ export class WhereClause<T, TKey> {
       return new Collection(ctx, this.getTransaction);
     }
 
+    // For single value, use equalsIgnoreCase
+    if (values.length === 1) {
+      return this.equalsIgnoreCase(values[0] as string);
+    }
+
+    // For multiple values, create a Set for fast lookup with optimized range
     const lowerValues = new Set(values.map((v) => v.toLowerCase()));
+
+    // Calculate range bounds from all values to narrow scan
+    // Empty strings can't be bounded with character ranges, so if present, use full scan
+    const hasEmpty = values.some((v) => v === "");
+    if (hasEmpty) {
+      // Can't optimize with ranges when empty strings are included
+      const ctx: CollectionContext = {
+        table: this.table,
+        index: this.indexName,
+        range: keyRangeAll(),
+        filter: (item: unknown) => {
+          const itemValue = this.getIndexValue(item);
+          if (typeof itemValue !== "string") return false;
+          return lowerValues.has(itemValue.toLowerCase());
+        },
+        reverse: false,
+        unique: false,
+      };
+      return new Collection(ctx, this.getTransaction);
+    }
+
+    const allUpper = values.map((v) => v.toUpperCase()).sort();
+    const allLower = values.map((v) => v.toLowerCase()).sort();
+    const minBound = allUpper[0] as string;
+    const maxValue = allLower[allLower.length - 1] as string;
+    const lastChar = maxValue.charAt(maxValue.length - 1);
+    const maxBound = maxValue.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
 
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(minBound, maxBound, false, true),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -317,12 +380,25 @@ export class WhereClause<T, TKey> {
       return new Collection(ctx, this.getTransaction);
     }
 
+    // For single prefix, use startsWithIgnoreCase
+    if (prefixes.length === 1) {
+      return this.startsWithIgnoreCase(prefixes[0] as string);
+    }
+
     const lowerPrefixes = prefixes.map((p) => p.toLowerCase());
+
+    // Calculate range bounds from all prefixes to narrow scan
+    const allUpper = prefixes.map((p) => p.toUpperCase()).sort();
+    const allLower = prefixes.map((p) => p.toLowerCase()).sort();
+    const minBound = allUpper[0] as string;
+    const maxPrefix = allLower[allLower.length - 1] as string;
+    const lastChar = maxPrefix.charAt(maxPrefix.length - 1);
+    const maxBound = maxPrefix.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
 
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(minBound, maxBound, false, true),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;

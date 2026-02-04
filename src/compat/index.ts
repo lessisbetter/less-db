@@ -149,9 +149,27 @@ export function getValueType(
 /**
  * IndexedDB doesn't accept objects where the primary key property
  * exists but has an undefined value. This removes the property.
+ * For compound keyPaths (arrays), fixes each field.
  */
-export function fixUndefinedKey<T extends object>(obj: T, keyPath: string | null): T {
-  if (!keyPath || typeof keyPath !== "string" || keyPath.includes(".")) {
+export function fixUndefinedKey<T extends object>(obj: T, keyPath: string | string[] | null): T {
+  if (!keyPath) {
+    return obj;
+  }
+
+  // Handle compound keyPaths
+  if (Array.isArray(keyPath)) {
+    let clone: T | null = null;
+    for (const field of keyPath) {
+      if ((obj as Record<string, unknown>)[field] === undefined && field in obj) {
+        if (!clone) clone = { ...obj };
+        delete (clone as Record<string, unknown>)[field];
+      }
+    }
+    return clone ?? obj;
+  }
+
+  // Single field keyPath
+  if (keyPath.includes(".")) {
     return obj;
   }
 

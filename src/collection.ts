@@ -18,6 +18,7 @@ import {
   primaryKeyQuery,
   indexQuery,
   extractPrimaryKeys,
+  extractKeyValue,
 } from "./dbcore/index.js";
 import { compareKeys } from "./compat/index.js";
 
@@ -627,17 +628,23 @@ export class OrClause<T, TKey> {
 
   /**
    * Get the indexed value from an item.
+   * For compound indexes, returns an array of values.
    */
   private getIndexValue(item: unknown): unknown {
     if (!item || typeof item !== "object") return undefined;
     const ctx = this.baseCollection._ctx;
 
     if (!this.indexName) {
-      const keyPath = ctx.table.schema.primaryKey.keyPath;
-      if (!keyPath) return undefined;
-      return (item as Record<string, unknown>)[keyPath];
+      return extractKeyValue(item, ctx.table.schema.primaryKey.keyPath);
     }
 
+    // Find the index spec to get its keyPath
+    const indexSpec = ctx.table.schema.indexes.find((idx) => idx.name === this.indexName);
+    if (indexSpec) {
+      return extractKeyValue(item, indexSpec.keyPath);
+    }
+
+    // Fall back to treating indexName as a single field
     return (item as Record<string, unknown>)[this.indexName];
   }
 
@@ -672,12 +679,13 @@ export class OrClause<T, TKey> {
       return this.baseCollection; // No additional matches
     }
     const ctx = this.baseCollection._ctx;
-    const valueSet = new Set(values);
+    // For compound indexes, values may be arrays - serialize for comparison
+    const serializedValues = new Set(values.map((v) => JSON.stringify(v)));
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
       range: keyRangeAll(),
-      filter: (item: unknown) => valueSet.has(this.getIndexValue(item)),
+      filter: (item: unknown) => serializedValues.has(JSON.stringify(this.getIndexValue(item))),
       reverse: false,
       unique: false,
     });
@@ -685,12 +693,13 @@ export class OrClause<T, TKey> {
 
   noneOf(values: unknown[]): Collection<T, TKey> {
     const ctx = this.baseCollection._ctx;
-    const valueSet = new Set(values);
+    // For compound indexes, values may be arrays - serialize for comparison
+    const serializedValues = new Set(values.map((v) => JSON.stringify(v)));
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
       range: keyRangeAll(),
-      filter: (item: unknown) => !valueSet.has(this.getIndexValue(item)),
+      filter: (item: unknown) => !serializedValues.has(JSON.stringify(this.getIndexValue(item))),
       reverse: false,
       unique: false,
     });
@@ -779,12 +788,29 @@ export class OrClause<T, TKey> {
   }
 
   startsWithIgnoreCase(prefix: string): Collection<T, TKey> {
+    if (prefix === "") {
+      return this.createOrCollection({
+        table: this.baseCollection._ctx.table,
+        index: this.indexName,
+        range: keyRangeAll(),
+        reverse: false,
+        unique: false,
+      });
+    }
+
     const lowerPrefix = prefix.toLowerCase();
+    const upperPrefix = prefix.toUpperCase();
     const ctx = this.baseCollection._ctx;
+
+    // Optimize with range query
+    const lowerBound = upperPrefix;
+    const upperChar = lowerPrefix.charAt(lowerPrefix.length - 1);
+    const upperBound = lowerPrefix.slice(0, -1) + String.fromCharCode(upperChar.charCodeAt(0) + 1);
+
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(lowerBound, upperBound, false, true),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -796,12 +822,23 @@ export class OrClause<T, TKey> {
   }
 
   equalsIgnoreCase(value: string): Collection<T, TKey> {
+    if (value === "") {
+      return this.equals("");
+    }
+
     const lowerValue = value.toLowerCase();
+    const upperValue = value.toUpperCase();
     const ctx = this.baseCollection._ctx;
+
+    // Optimize with range query
+    const lowerBound = upperValue;
+    const lastChar = lowerValue.charAt(lowerValue.length - 1);
+    const upperBound = lowerValue.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
+
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(lowerBound, upperBound, false, true),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -816,12 +853,40 @@ export class OrClause<T, TKey> {
     if (values.length === 0) {
       return this.baseCollection; // No additional matches
     }
+
     const lowerValues = new Set(values.map((v) => v.toLowerCase()));
     const ctx = this.baseCollection._ctx;
+
+    // Empty strings can't be bounded with character ranges
+    const hasEmpty = values.some((v) => v === "");
+    if (hasEmpty) {
+      // Can't optimize with ranges when empty strings are included
+      return this.createOrCollection({
+        table: ctx.table,
+        index: this.indexName,
+        range: keyRangeAll(),
+        filter: (item: unknown) => {
+          const itemValue = this.getIndexValue(item);
+          if (typeof itemValue !== "string") return false;
+          return lowerValues.has(itemValue.toLowerCase());
+        },
+        reverse: false,
+        unique: false,
+      });
+    }
+
+    // Optimize with range query covering all values
+    const allUpper = values.map((v) => v.toUpperCase()).sort();
+    const allLower = values.map((v) => v.toLowerCase()).sort();
+    const minBound = allUpper[0] as string;
+    const maxValue = allLower[allLower.length - 1] as string;
+    const lastChar = maxValue.charAt(maxValue.length - 1);
+    const maxBound = maxValue.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
+
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(minBound, maxBound, false, true),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -859,12 +924,22 @@ export class OrClause<T, TKey> {
     if (prefixes.length === 0) {
       return this.baseCollection; // No additional matches
     }
+
     const lowerPrefixes = prefixes.map((p) => p.toLowerCase());
     const ctx = this.baseCollection._ctx;
+
+    // Optimize with range query covering all prefixes
+    const allUpper = prefixes.map((p) => p.toUpperCase()).sort();
+    const allLower = prefixes.map((p) => p.toLowerCase()).sort();
+    const minBound = allUpper[0] as string;
+    const maxPrefix = allLower[allLower.length - 1] as string;
+    const lastChar = maxPrefix.charAt(maxPrefix.length - 1);
+    const maxBound = maxPrefix.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
+
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeAll(),
+      range: keyRangeRange(minBound, maxBound, false, true),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;

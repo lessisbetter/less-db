@@ -2860,4 +2860,258 @@ describe("LessDB", () => {
       expect(results).toHaveLength(0);
     });
   });
+
+  describe("compound indexes", () => {
+    interface Person {
+      id?: number;
+      firstName: string;
+      lastName: string;
+      age: number;
+      city: string;
+    }
+
+    beforeEach(async () => {
+      db.version(1).stores({
+        people: "++id, [firstName+lastName], [city+age], &[firstName+lastName+age]",
+      });
+      await db.open();
+
+      const people = db.table<Person, number>("people");
+      await people.bulkAdd([
+        { firstName: "John", lastName: "Doe", age: 30, city: "NYC" },
+        { firstName: "John", lastName: "Smith", age: 25, city: "LA" },
+        { firstName: "Jane", lastName: "Doe", age: 28, city: "NYC" },
+        { firstName: "Jane", lastName: "Smith", age: 35, city: "Chicago" },
+        { firstName: "Bob", lastName: "Wilson", age: 40, city: "NYC" },
+      ]);
+    });
+
+    it("creates compound indexes correctly", async () => {
+      const people = db.table<Person, number>("people");
+      const schema = people.schema;
+
+      // Should have 3 indexes
+      expect(schema.indexes).toHaveLength(3);
+
+      // First compound index
+      const nameIndex = schema.indexes.find((idx) => idx.name === "firstName+lastName");
+      expect(nameIndex).toBeDefined();
+      expect(nameIndex?.keyPath).toEqual(["firstName", "lastName"]);
+
+      // Second compound index
+      const cityAgeIndex = schema.indexes.find((idx) => idx.name === "city+age");
+      expect(cityAgeIndex).toBeDefined();
+      expect(cityAgeIndex?.keyPath).toEqual(["city", "age"]);
+
+      // Third compound index (unique)
+      const uniqueIndex = schema.indexes.find((idx) => idx.name === "firstName+lastName+age");
+      expect(uniqueIndex).toBeDefined();
+      expect(uniqueIndex?.keyPath).toEqual(["firstName", "lastName", "age"]);
+      expect(uniqueIndex?.unique).toBe(true);
+    });
+
+    it("queries compound index with equals", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Query for John Doe using compound key
+      const results = await people.where("firstName+lastName").equals(["John", "Doe"]).toArray();
+
+      expect(results).toHaveLength(1);
+      expect(results[0].firstName).toBe("John");
+      expect(results[0].lastName).toBe("Doe");
+    });
+
+    it("queries compound index with between", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Query for people in NYC with age between 25 and 35
+      const results = await people.where("city+age").between(["NYC", 25], ["NYC", 35]).toArray();
+
+      expect(results).toHaveLength(2);
+      expect(results.every((p) => p.city === "NYC")).toBe(true);
+    });
+
+    it("queries compound index with above", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Query for compound keys above ["Jane", "Doe"]
+      const results = await people.where("firstName+lastName").above(["Jane", "Doe"]).toArray();
+
+      // Should include Jane Smith, John Doe, John Smith (alphabetically after Jane Doe)
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it("queries compound index with anyOf", async () => {
+      const people = db.table<Person, number>("people");
+
+      const results = await people
+        .where("firstName+lastName")
+        .anyOf([
+          ["John", "Doe"],
+          ["Jane", "Doe"],
+        ])
+        .toArray();
+
+      expect(results).toHaveLength(2);
+      expect(results.some((p) => p.firstName === "John" && p.lastName === "Doe")).toBe(true);
+      expect(results.some((p) => p.firstName === "Jane" && p.lastName === "Doe")).toBe(true);
+    });
+
+    it("uses compound index for filter operations", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Filter with noneOf on compound index
+      const results = await people
+        .where("firstName+lastName")
+        .noneOf([
+          ["John", "Doe"],
+          ["John", "Smith"],
+        ])
+        .toArray();
+
+      expect(results).toHaveLength(3);
+      expect(results.every((p) => p.firstName !== "John")).toBe(true);
+    });
+
+    it("enforces uniqueness on unique compound index", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Try to add a duplicate based on [firstName+lastName+age]
+      await expect(
+        people.add({ firstName: "John", lastName: "Doe", age: 30, city: "Boston" }),
+      ).rejects.toThrow();
+    });
+
+    it("allows same partial compound key with different third field", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Same firstName+lastName but different age should work
+      const id = await people.add({
+        firstName: "John",
+        lastName: "Doe",
+        age: 31,
+        city: "Boston",
+      });
+
+      expect(id).toBeDefined();
+
+      const all = await people.toArray();
+      expect(all).toHaveLength(6);
+    });
+
+    it("works with or queries on compound indexes", async () => {
+      const people = db.table<Person, number>("people");
+
+      const results = await people
+        .where("firstName+lastName")
+        .equals(["John", "Doe"])
+        .or("city+age")
+        .equals(["Chicago", 35])
+        .toArray();
+
+      expect(results).toHaveLength(2);
+    });
+
+    it("sorts correctly by compound index", async () => {
+      const people = db.table<Person, number>("people");
+
+      const results = await people.orderBy("firstName+lastName").toArray();
+
+      // Should be sorted by firstName, then lastName
+      expect(results[0].firstName).toBe("Bob");
+      expect(results[1].firstName).toBe("Jane");
+      expect(results[1].lastName).toBe("Doe");
+      expect(results[2].firstName).toBe("Jane");
+      expect(results[2].lastName).toBe("Smith");
+    });
+
+    it("extracts compound key values correctly for filtering", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Use notEqual which internally extracts the compound key
+      const results = await people.where("firstName+lastName").notEqual(["John", "Doe"]).toArray();
+
+      expect(results).toHaveLength(4);
+      expect(results.every((p) => !(p.firstName === "John" && p.lastName === "Doe"))).toBe(true);
+    });
+
+    it("handles OrClause anyOf with compound keys", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Test that anyOf works with compound keys in OR queries
+      const results = await people
+        .where("city+age")
+        .equals(["NYC", 30])
+        .or("firstName+lastName")
+        .anyOf([
+          ["Jane", "Doe"],
+          ["Bob", "Wilson"],
+        ])
+        .toArray();
+
+      expect(results).toHaveLength(3);
+      expect(results.some((p) => p.firstName === "Jane" && p.lastName === "Doe")).toBe(true);
+      expect(results.some((p) => p.firstName === "Bob" && p.lastName === "Wilson")).toBe(true);
+      expect(results.some((p) => p.firstName === "John" && p.lastName === "Doe")).toBe(true);
+    });
+
+    it("handles OrClause noneOf with compound keys", async () => {
+      const people = db.table<Person, number>("people");
+
+      // Test that noneOf works with compound keys in OR queries
+      const results = await people
+        .where("city+age")
+        .equals(["NYC", 30])
+        .or("firstName+lastName")
+        .noneOf([
+          ["John", "Smith"],
+          ["Bob", "Wilson"],
+        ])
+        .toArray();
+
+      // Should include John Doe + everyone except John Smith and Bob Wilson
+      expect(results).toHaveLength(3);
+      expect(results.some((p) => p.firstName === "John" && p.lastName === "Doe")).toBe(true);
+      expect(results.some((p) => p.firstName === "Jane" && p.lastName === "Doe")).toBe(true);
+    });
+  });
+
+  describe("case-insensitive edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "", email: "empty@test.com", age: 30 },
+        { name: "Bob", email: "b@test.com", age: 35 },
+      ]);
+    });
+
+    it("handles equalsIgnoreCase with empty string", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.where("name").equalsIgnoreCase("").toArray();
+
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toBe("");
+    });
+
+    it("handles anyOfIgnoreCase with empty strings", async () => {
+      const users = db.table<User, number>("users");
+
+      // Array with only empty string
+      const results1 = await users.where("name").anyOfIgnoreCase([""]).toArray();
+      expect(results1).toHaveLength(1);
+      expect(results1[0].name).toBe("");
+
+      // Mixed empty and non-empty
+      const results2 = await users.where("name").anyOfIgnoreCase(["", "ALICE"]).toArray();
+      expect(results2).toHaveLength(2);
+      expect(results2.some((u) => u.name === "")).toBe(true);
+      expect(results2.some((u) => u.name === "Alice")).toBe(true);
+    });
+  });
 });

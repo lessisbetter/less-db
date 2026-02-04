@@ -7,12 +7,18 @@
  *   ++       Auto-increment
  *   &        Unique (also valid for indexes)
  *
+ * Index types:
+ *   field           - Single field index
+ *   [field1+field2] - Compound index on multiple fields
+ *
  * Examples:
- *   '++id'           - Auto-increment id field
- *   '++'             - Auto-increment, key not in object (outbound)
- *   'id'             - Explicit id field
- *   '++id, name'     - Primary key + indexed name field
- *   '++id, &email'   - Primary key + unique email index
+ *   '++id'                    - Auto-increment id field
+ *   '++'                      - Auto-increment, key not in object (outbound)
+ *   'id'                      - Explicit id field
+ *   '++id, name'              - Primary key + indexed name field
+ *   '++id, &email'            - Primary key + unique email index
+ *   '++id, [firstName+lastName]' - Primary key + compound index
+ *   '++id, &[email+domain]'   - Primary key + unique compound index
  */
 
 import { SchemaError } from "./errors/index.js";
@@ -21,10 +27,10 @@ import { SchemaError } from "./errors/index.js";
  * Specification for a single index or primary key.
  */
 export interface IndexSpec {
-  /** The name of the index (key path) */
+  /** The name of the index (e.g., "email" or "firstName+lastName") */
   name: string;
-  /** The key path - property name to index */
-  keyPath: string | null;
+  /** The key path - property name(s) to index. Array for compound indexes. */
+  keyPath: string | string[] | null;
   /** Whether this is the primary key */
   isPrimaryKey: boolean;
   /** Whether the key auto-increments */
@@ -33,6 +39,8 @@ export interface IndexSpec {
   unique: boolean;
   /** Whether the key is stored outside the object (outbound) */
   outbound: boolean;
+  /** Whether this is a compound (multi-field) index */
+  compound: boolean;
 }
 
 /**
@@ -60,12 +68,16 @@ export type DatabaseSchema = Record<string, TableSchema>;
  *   '&email' -> unique index
  *   'name' -> regular index
  *   '++' -> outbound auto-increment
+ *   '[firstName+lastName]' -> compound index
+ *   '&[email+domain]' -> unique compound index
  */
 function parseIndexSpec(spec: string, isPrimaryKey: boolean): IndexSpec {
   let name = spec.trim();
   let auto = false;
   let unique = false;
   let outbound = false;
+  let compound = false;
+  let keyPath: string | string[] | null = null;
 
   // Check for auto-increment prefix
   if (name.startsWith("++")) {
@@ -79,12 +91,45 @@ function parseIndexSpec(spec: string, isPrimaryKey: boolean): IndexSpec {
     name = name.slice(1);
   }
 
-  // If name is empty after removing prefixes, it's an outbound key
-  if (name === "") {
+  // Check for compound index syntax: [field1+field2+...]
+  if (name.startsWith("[") && name.endsWith("]")) {
+    compound = true;
+    const inner = name.slice(1, -1).trim();
+
+    if (!inner) {
+      throw new SchemaError("Empty compound index definition");
+    }
+
+    // Split by + and trim each field
+    const fields = inner.split("+").map((f) => f.trim());
+
+    if (fields.length < 2) {
+      throw new SchemaError(`Compound index must have at least 2 fields, got: "${inner}"`);
+    }
+
+    // Validate field names (no empty fields, no special chars except underscore)
+    for (const field of fields) {
+      if (!field) {
+        throw new SchemaError(`Empty field name in compound index: "${inner}"`);
+      }
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) {
+        throw new SchemaError(`Invalid field name in compound index: "${field}"`);
+      }
+    }
+
+    // Name is fields joined by +, keyPath is the array
+    name = fields.join("+");
+    keyPath = fields;
+  } else if (name === "") {
+    // If name is empty after removing prefixes, it's an outbound key
     if (!isPrimaryKey) {
       throw new SchemaError("Empty index name is only valid for primary key");
     }
     outbound = true;
+    keyPath = null;
+  } else {
+    // Simple single-field index
+    keyPath = name;
   }
 
   // Primary keys are implicitly unique
@@ -94,11 +139,12 @@ function parseIndexSpec(spec: string, isPrimaryKey: boolean): IndexSpec {
 
   return {
     name: name || "",
-    keyPath: outbound ? null : name,
+    keyPath,
     isPrimaryKey,
     auto,
     unique,
     outbound,
+    compound,
   };
 }
 
@@ -154,8 +200,20 @@ export function parseStores(stores: Record<string, string>): DatabaseSchema {
 /**
  * Get the key path for extracting primary keys from objects.
  */
-export function getKeyPath(schema: TableSchema): string | null {
+export function getKeyPath(schema: TableSchema): string | string[] | null {
   return schema.primaryKey.keyPath;
+}
+
+/**
+ * Compare two keyPaths for equality (handles both string and array).
+ */
+function keyPathsEqual(a: string | string[] | null, b: string | string[] | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (typeof a === "string" || typeof b === "string") return a === b;
+  // Both are arrays
+  if (a.length !== b.length) return false;
+  return a.every((val, i) => val === b[i]);
 }
 
 /**
@@ -221,7 +279,7 @@ export function diffSchemas(oldSchema: DatabaseSchema, newSchema: DatabaseSchema
 
     // Check primary key changes (not allowed - requires recreate)
     if (
-      oldTable.primaryKey.keyPath !== newTable.primaryKey.keyPath ||
+      !keyPathsEqual(oldTable.primaryKey.keyPath, newTable.primaryKey.keyPath) ||
       oldTable.primaryKey.auto !== newTable.primaryKey.auto
     ) {
       changes.push({ type: "change-primary-key", tableName });
