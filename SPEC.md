@@ -259,11 +259,12 @@ Middleware wraps the core database operations, enabling features like:
 
 ```typescript
 interface Middleware {
-  name: string;
+  stack: "dbcore"; // Required - identifies this as a DBCore middleware
+  name?: string; // Optional name for debugging
   level?: number; // Execution order (lower = closer to IndexedDB)
 
-  // Wrap the DBCore layer
-  create(downCore: DBCore): DBCore;
+  // Wrap the DBCore layer - returns partial override
+  create(downCore: DBCore): Partial<DBCore>;
 }
 
 // Register middleware
@@ -271,23 +272,82 @@ db.use(myMiddleware);
 
 // DBCore interface (internal, but exposed for middleware)
 interface DBCore {
+  stack: "dbcore";
+  schema: DBCoreSchema;
   transaction(tables: string[], mode: TransactionMode): DBCoreTransaction;
-
-  // Table operations
   table(name: string): DBCoreTable;
 }
 
-interface DBCoreTable {
-  get(trans: DBCoreTransaction, key: any): Promise<any>;
-  getMany(trans: DBCoreTransaction, keys: any[]): Promise<any[]>;
-  put(trans: DBCoreTransaction, values: any[], keys?: any[]): Promise<any[]>;
-  add(trans: DBCoreTransaction, values: any[], keys?: any[]): Promise<any[]>;
-  delete(trans: DBCoreTransaction, keys: any[]): Promise<void>;
-  deleteRange(trans: DBCoreTransaction, range: DBCoreKeyRange): Promise<void>;
-  count(trans: DBCoreTransaction, range?: DBCoreKeyRange): Promise<number>;
-  query(trans: DBCoreTransaction, request: DBCoreQueryRequest): Promise<DBCoreQueryResponse>;
-  openCursor(trans: DBCoreTransaction, request: DBCoreQueryRequest): Promise<DBCoreCursor | null>;
+// Transaction interface - middleware can attach custom properties
+interface DBCoreTransaction {
+  abort(): void;
+  // Middleware can add custom properties, e.g.:
+  // __syncOrigin?: 'local' | 'remote';
+  // __changeTracking?: ChangeRecord[];
 }
+
+// All request objects include the transaction (Dexie pattern)
+interface DBCoreTable {
+  name: string;
+  schema: DBCoreTableSchema;
+
+  get(req: { trans: DBCoreTransaction; key: any }): Promise<any>;
+  getMany(req: { trans: DBCoreTransaction; keys: any[] }): Promise<any[]>;
+  query(req: DBCoreQueryRequest): Promise<DBCoreQueryResponse>;
+  count(req: DBCoreCountRequest): Promise<number>;
+  mutate(req: DBCoreMutateRequest): Promise<DBCoreMutateResponse>;
+  openCursor(req: DBCoreOpenCursorRequest): Promise<DBCoreCursor | null>;
+}
+
+// Mutate request supports add, put, delete, and deleteRange
+interface DBCoreMutateRequest {
+  trans: DBCoreTransaction;
+  type: "add" | "put" | "delete" | "deleteRange";
+  values?: readonly unknown[]; // For add/put
+  keys?: unknown[]; // For add/put/delete
+  range?: DBCoreKeyRange; // For deleteRange
+}
+```
+
+#### Middleware Chaining
+
+Middleware forms a chain where each layer can intercept and modify operations:
+
+```typescript
+// Example: Sync tracking middleware
+const syncMiddleware: Middleware = {
+  stack: "dbcore",
+  name: "sync-tracker",
+  level: 1, // Close to IndexedDB
+
+  create(downCore: DBCore): Partial<DBCore> {
+    return {
+      table: (name: string): DBCoreTable => {
+        const downTable = downCore.table(name);
+        return {
+          ...downTable,
+          mutate: async (req) => {
+            // Check if this is a remote sync operation
+            const isRemote = (req.trans as any).__syncOrigin === "remote";
+
+            if (!isRemote) {
+              // Track local changes for sync
+              trackLocalChange(name, req);
+            }
+
+            return downTable.mutate(req);
+          },
+        };
+      },
+    };
+  },
+};
+
+// Usage: Mark transaction as remote sync
+await db.transaction("rw", ["users"], async (tx) => {
+  (tx as any).__syncOrigin = "remote";
+  await tx.table("users").bulkPut(remoteChanges);
+});
 ```
 
 ### Table Hooks
@@ -564,6 +624,313 @@ db.friends
 
 ---
 
+## Dexie Alignment Patterns
+
+This section documents key Dexie.js patterns that LessDB should implement for full compatibility. These patterns have been battle-tested in Dexie across millions of applications.
+
+### Transaction Management
+
+#### Implicit Transactions (Not Yet Implemented)
+
+Dexie automatically creates a transaction for single operations when no explicit transaction exists:
+
+```typescript
+// In Dexie, this auto-creates a readonly transaction:
+const user = await db.users.get(1);
+
+// This auto-creates a readwrite transaction:
+await db.users.add({ name: "Alice" });
+
+// LessDB currently requires: await db.open() first, then operations
+// use implicit single-operation transactions internally
+```
+
+**Implementation approach**: Wrap table operations to detect if running inside a transaction context. If not, create an implicit single-operation transaction.
+
+#### PSD (Promise-Specific Data) Pattern (Not Yet Implemented)
+
+Dexie uses "Promise-Specific Data" to track transaction context across async boundaries. This allows nested function calls to automatically reuse the parent transaction.
+
+```typescript
+// Dexie's PSD allows this to work:
+async function addUserWithProfile(userData, profileData) {
+  // These automatically use the same transaction if called within one
+  const userId = await db.users.add(userData);
+  await db.profiles.add({ ...profileData, userId });
+  return userId;
+}
+
+// Called within explicit transaction - both ops use same transaction
+await db.transaction("rw", ["users", "profiles"], async () => {
+  await addUserWithProfile({ name: "Alice" }, { bio: "Hello" });
+});
+
+// Called outside transaction - each op gets its own implicit transaction
+await addUserWithProfile({ name: "Bob" }, { bio: "World" });
+```
+
+**Dexie's implementation** (`src/helpers/promise.js`):
+
+- Uses Zone.js-like pattern with a global `PSD` (Promise-Specific Data) object
+- Wraps Promise to propagate PSD through `.then()` chains
+- Stores current transaction in `PSD.trans`
+- Functions can access `PSD.trans` to get the ambient transaction
+
+**Implementation options for LessDB**:
+
+1. **AsyncLocalStorage** (Node.js) - Use `AsyncLocalStorage` for server-side
+2. **Zone.js pattern** - Wrap Promise prototype (invasive but compatible)
+3. **Explicit context** - Require passing transaction context (less ergonomic)
+
+#### Nested Transaction Reuse
+
+When code requests a transaction on tables already covered by a parent transaction, Dexie reuses the parent:
+
+```typescript
+await db.transaction("rw", ["users", "posts"], async () => {
+  // This nested transaction reuses the parent (same tables, compatible mode)
+  await db.transaction("r", ["users"], async () => {
+    const user = await db.users.get(1);
+  });
+});
+```
+
+**Rules from Dexie**:
+
+- Nested transaction must request subset of parent's tables
+- Nested mode must be compatible (readonly can nest in readwrite)
+- If incompatible, Dexie either throws or waits (configurable)
+
+#### Blocked Function Queue
+
+When a transaction can't start immediately (e.g., waiting for another transaction), Dexie queues the operation instead of failing:
+
+```typescript
+// In Dexie, these can run concurrently without explicit coordination
+const promise1 = db.transaction("rw", ["users"], async () => {
+  /* ... */
+});
+const promise2 = db.transaction("rw", ["users"], async () => {
+  /* ... */
+});
+// promise2 waits for promise1 to complete
+```
+
+### Error Handling Patterns
+
+#### Error Type Hierarchy
+
+Dexie provides a rich error hierarchy for precise error handling:
+
+```typescript
+// Dexie's error types (from src/errors/index.js)
+class DexieError extends Error {
+  name: string;
+  inner?: Error; // Original error
+}
+
+// Specific error types
+class AbortError extends DexieError {} // Transaction aborted
+class ConstraintError extends DexieError {} // Unique constraint violation
+class DataError extends DexieError {} // Invalid data for IndexedDB
+class DatabaseClosedError extends DexieError {} // DB was closed
+class InternalError extends DexieError {} // Internal error
+class InvalidAccessError extends DexieError {} // Access violation
+class InvalidArgumentError extends DexieError {} // Bad argument
+class InvalidStateError extends DexieError {} // Invalid state
+class InvalidTableError extends DexieError {} // Table doesn't exist
+class MissingAPIError extends DexieError {} // IndexedDB not available
+class NoSuchDatabaseError extends DexieError {} // Database doesn't exist
+class NotFoundError extends DexieError {} // Record not found
+class OpenFailedError extends DexieError {} // Failed to open database
+class PrematureCommitError extends DexieError {} // Transaction committed early
+class QuotaExceededError extends DexieError {} // Storage quota exceeded
+class ReadOnlyError extends DexieError {} // Write in readonly transaction
+class SchemaError extends DexieError {} // Schema definition error
+class SubTransactionError extends DexieError {} // Nested transaction error
+class TimeoutError extends DexieError {} // Operation timeout
+class TransactionInactiveError extends DexieError {} // Transaction no longer active
+class UnknownError extends DexieError {} // Unknown error
+class UnsupportedError extends DexieError {} // Unsupported operation
+class UpgradeError extends DexieError {} // Version upgrade failed
+class VersionChangeError extends DexieError {} // Version change error
+class VersionError extends DexieError {} // Version mismatch
+```
+
+#### Type-Based Error Catching (Not Yet Implemented)
+
+Dexie extends Promise with type-based `.catch()`:
+
+```typescript
+// Dexie's type-based catch
+await db.users
+  .add({ id: 1, name: "Alice" })
+  .catch(Dexie.ConstraintError, (err) => {
+    // Handle duplicate key specifically
+    console.log("User already exists");
+  })
+  .catch(Dexie.QuotaExceededError, (err) => {
+    // Handle storage full
+    console.log("Storage quota exceeded");
+  })
+  .catch((err) => {
+    // Handle all other errors
+    console.log("Unexpected error:", err);
+  });
+```
+
+**Implementation approach**: Create a custom Promise subclass or wrapper that adds type-based catch:
+
+```typescript
+class LessDBPromise<T> extends Promise<T> {
+  catch<TResult = never>(
+    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null,
+  ): Promise<T | TResult>;
+  catch<E extends Error, TResult = never>(
+    ErrorType: new (...args: any[]) => E,
+    onrejected: (error: E) => TResult | PromiseLike<TResult>,
+  ): LessDBPromise<T | TResult>;
+}
+```
+
+#### Error Mapping
+
+Dexie maps IndexedDB's DOMException errors to semantic error types:
+
+```typescript
+// Dexie's error mapping (simplified from src/errors/index.js)
+function mapError(domError: DOMException): DexieError {
+  switch (domError.name) {
+    case "ConstraintError":
+      return new ConstraintError(domError.message, domError);
+    case "QuotaExceededError":
+      return new QuotaExceededError(domError.message, domError);
+    case "DataError":
+      return new DataError(domError.message, domError);
+    // ... etc
+  }
+}
+```
+
+### Hooks as Middleware (Not Yet Implemented)
+
+Dexie implements table hooks as internal middleware, which provides several benefits:
+
+1. **Consistent interception point** - All operations go through middleware
+2. **Composable** - Multiple hooks stack naturally
+3. **Cancellable** - Hooks can prevent operations
+
+**Current LessDB approach**: Hooks are called directly in Table methods
+**Dexie approach**: Hooks are middleware that wraps DBCore operations
+
+```typescript
+// Dexie's hooks middleware pattern (conceptual)
+const hooksMiddleware: Middleware = {
+  stack: "dbcore",
+  name: "hooks",
+  level: 0, // Outermost layer
+
+  create(downCore: DBCore): Partial<DBCore> {
+    return {
+      table: (name: string) => {
+        const downTable = downCore.table(name);
+        const hooks = getHooksForTable(name);
+
+        return {
+          ...downTable,
+          mutate: async (req) => {
+            // Fire creating/updating/deleting hooks
+            if (req.type === "add") {
+              for (const value of req.values) {
+                hooks.creating.fire(undefined, value, req.trans);
+              }
+            }
+            return downTable.mutate(req);
+          },
+          get: async (req) => {
+            const result = await downTable.get(req);
+            // Fire reading hook
+            return hooks.reading.fire(result);
+          },
+        };
+      },
+    };
+  },
+};
+```
+
+### Cache Middleware Pattern
+
+Dexie provides optional caching via middleware:
+
+```typescript
+// Dexie's cache middleware concept
+const cacheMiddleware: Middleware = {
+  stack: "dbcore",
+  name: "cache",
+
+  create(downCore: DBCore): Partial<DBCore> {
+    const cache = new Map<string, Map<any, any>>(); // table -> key -> value
+
+    return {
+      table: (name: string) => {
+        const downTable = downCore.table(name);
+        const tableCache = cache.get(name) ?? new Map();
+        cache.set(name, tableCache);
+
+        return {
+          ...downTable,
+          get: async (req) => {
+            if (tableCache.has(req.key)) {
+              return tableCache.get(req.key);
+            }
+            const result = await downTable.get(req);
+            tableCache.set(req.key, result);
+            return result;
+          },
+          mutate: async (req) => {
+            // Invalidate cache on mutations
+            if (req.type === "add" || req.type === "put") {
+              req.keys?.forEach((k) => tableCache.delete(k));
+            } else if (req.type === "delete") {
+              req.keys?.forEach((k) => tableCache.delete(k));
+            } else if (req.type === "deleteRange") {
+              tableCache.clear(); // Conservative: clear all
+            }
+            return downTable.mutate(req);
+          },
+        };
+      },
+    };
+  },
+};
+```
+
+### Live Query Pattern (Future)
+
+Dexie's `liveQuery` observes database changes and re-runs queries:
+
+```typescript
+// Dexie's liveQuery API
+import { liveQuery } from "dexie";
+
+const observable = liveQuery(() => db.users.where("age").above(18).toArray());
+
+observable.subscribe({
+  next: (users) => console.log("Users updated:", users),
+  error: (err) => console.error("Query error:", err),
+});
+```
+
+**Implementation components**:
+
+1. **Query tracking** - Record which tables/ranges a query reads
+2. **Change detection** - Middleware emits change events on mutations
+3. **Selective re-query** - Only re-run queries affected by changes
+4. **Subscription management** - Handle subscribe/unsubscribe lifecycle
+
+---
+
 ## Future Extensions (Designed For)
 
 ### Live Queries (Reactivity)
@@ -655,10 +1022,36 @@ db.use(
 - [x] Events (changes, ready, etc.)
 - [x] bfcache handling (setupBfCacheHandling())
 
-### Phase 4: Polish
+### Phase 4: Dexie Deep Alignment 🚧
+
+These patterns are critical for matching Dexie's behavior and enabling advanced use cases like sync:
+
+#### High Priority
+
+- [ ] **Implicit transactions** - Auto-create transaction for single operations outside explicit transaction
+- [ ] **PSD (Promise-Specific Data)** - Track transaction context across async boundaries
+- [ ] **Expanded error types** - Add all Dexie error types (QuotaExceededError, TimeoutError, etc.)
+- [ ] **Type-based error catching** - `promise.catch(ConstraintError, handler)` pattern
+- [ ] **Error mapping** - Map IndexedDB DOMException to semantic error types
+
+#### Medium Priority
+
+- [ ] **Hooks as middleware** - Implement hooks via DBCore middleware layer
+- [ ] **Cache middleware** - Optional per-table caching middleware
+- [ ] **Nested transaction reuse** - Reuse parent transaction when tables are subset
+- [ ] **Recursive locking** - Allow nested operations on same tables within transaction
+- [ ] **Blocked function queue** - Queue operations waiting for transaction access
+
+#### Lower Priority
+
+- [ ] **Live query foundation** - Query tracking and change detection for observables
+- [ ] **Observability middleware** - Standard middleware for logging/debugging
+- [ ] **VIP promise pattern** - Priority handling for internal operations
+
+### Phase 5: Polish
 
 - [x] Full TypeScript generics
-- [x] Comprehensive tests (253 tests)
+- [x] Comprehensive tests (423 tests)
 - [ ] Documentation
 - [ ] Performance optimization
 

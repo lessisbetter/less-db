@@ -10,8 +10,9 @@ import type {
   DBCoreTransaction,
   DBCoreQueryRequest,
   DBCoreKeyRange,
+  DBCoreIndex,
 } from "./dbcore/index.js";
-import { keyRangeRange } from "./dbcore/index.js";
+import { keyRangeRange, keyRangeAll, primaryKeyQuery, indexQuery } from "./dbcore/index.js";
 import { compareKeys } from "./compat/index.js";
 
 /**
@@ -51,7 +52,7 @@ export function createCollectionContext(table: DBCoreTable): CollectionContext {
   return {
     table,
     index: "",
-    range: keyRangeRange(undefined, undefined),
+    range: keyRangeAll(),
     reverse: false,
     unique: false,
   };
@@ -62,6 +63,16 @@ export function createCollectionContext(table: DBCoreTable): CollectionContext {
  */
 function cloneContext(ctx: CollectionContext, mods: Partial<CollectionContext>): CollectionContext {
   return { ...ctx, ...mods };
+}
+
+/**
+ * Build a DBCoreQuery from context.
+ */
+function buildQuery(ctx: CollectionContext): { index: DBCoreIndex; range: DBCoreKeyRange } {
+  if (!ctx.index) {
+    return primaryKeyQuery(ctx.table.schema, ctx.range);
+  }
+  return indexQuery(ctx.table.schema, ctx.index, ctx.range);
 }
 
 /**
@@ -174,17 +185,18 @@ export class Collection<T, TKey> {
     const needsPostProcessing = !!(ctx.filter || ctx.until);
 
     const request: DBCoreQueryRequest = {
-      index: ctx.index,
-      range: ctx.range,
+      trans,
+      query: buildQuery(ctx),
+      values: true,
       limit: needsPostProcessing ? undefined : ctx.limit,
       offset: needsPostProcessing ? undefined : ctx.offset,
       reverse: ctx.reverse,
       unique: ctx.unique,
     };
 
-    const response = await ctx.table.query(trans, request);
-    let values = response.values;
-    let keys = response.keys;
+    const response = await ctx.table.query(request);
+    let values = response.result;
+    let keys = response.keys ?? [];
 
     // Apply filter if present
     if (ctx.filter) {
@@ -302,7 +314,10 @@ export class Collection<T, TKey> {
     }
 
     // Otherwise we can use the DB count on primary key
-    return ctx.table.count(trans, ctx.range);
+    return ctx.table.count({
+      trans,
+      query: primaryKeyQuery(ctx.table.schema, ctx.range),
+    });
   }
 
   /**
@@ -436,15 +451,16 @@ export class Collection<T, TKey> {
 
     // Get all matching items with their keys
     const request: DBCoreQueryRequest = {
-      index: ctx.index,
-      range: ctx.range,
+      trans,
+      query: buildQuery(ctx),
+      values: true,
       reverse: ctx.reverse,
       unique: ctx.unique,
     };
 
-    const response = await ctx.table.query(trans, request);
-    let values = response.values;
-    let keys = response.keys;
+    const response = await ctx.table.query(request);
+    let values = response.result;
+    let keys = response.keys ?? [];
 
     // Apply filter
     if (ctx.filter) {
@@ -489,8 +505,9 @@ export class Collection<T, TKey> {
 
     // Put all modified values
     if (modifiedValues.length > 0) {
-      await ctx.table.mutate(trans, {
+      await ctx.table.mutate({
         type: "put",
+        trans,
         values: modifiedValues,
         keys: keys,
       });
@@ -516,10 +533,14 @@ export class Collection<T, TKey> {
     // (deleteRange only works on primary key, not on indexes)
     if (!ctx.filter && !ctx.offset && ctx.limit === undefined && !ctx.index) {
       // Count BEFORE deleting
-      const count = await ctx.table.count(trans, ctx.range);
+      const count = await ctx.table.count({
+        trans,
+        query: primaryKeyQuery(ctx.table.schema, ctx.range),
+      });
 
-      await ctx.table.mutate(trans, {
+      await ctx.table.mutate({
         type: "deleteRange",
+        trans,
         range: ctx.range,
       });
 
@@ -528,21 +549,22 @@ export class Collection<T, TKey> {
 
     // Otherwise, get keys first (using same transaction), then delete them
     const request: DBCoreQueryRequest = {
-      index: ctx.index,
-      range: ctx.range,
+      trans,
+      query: buildQuery(ctx),
+      values: true,
       reverse: ctx.reverse,
       unique: ctx.unique,
     };
 
-    const response = await ctx.table.query(trans, request);
-    let keys = response.keys;
+    const response = await ctx.table.query(request);
+    let keys = response.keys ?? [];
 
     // Apply filter if present
     if (ctx.filter) {
       const filteredKeys: unknown[] = [];
-      for (let i = 0; i < response.values.length; i++) {
-        if (ctx.filter(response.values[i])) {
-          filteredKeys.push(response.keys[i]);
+      for (let i = 0; i < response.result.length; i++) {
+        if (ctx.filter(response.result[i])) {
+          filteredKeys.push(keys[i]);
         }
       }
       keys = filteredKeys;
@@ -557,8 +579,9 @@ export class Collection<T, TKey> {
     }
 
     if (keys.length > 0) {
-      await ctx.table.mutate(trans, {
+      await ctx.table.mutate({
         type: "delete",
+        trans,
         keys,
       });
     }
@@ -629,7 +652,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const indexValue = this.getIndexValue(item);
         return indexValue !== value;
@@ -648,7 +671,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => valueSet.has(this.getIndexValue(item)),
       reverse: false,
       unique: false,
@@ -661,7 +684,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => !valueSet.has(this.getIndexValue(item)),
       reverse: false,
       unique: false,
@@ -734,7 +757,7 @@ export class OrClause<T, TKey> {
       return this.createOrCollection({
         table: ctx.table,
         index: this.indexName,
-        range: keyRangeRange(undefined, undefined),
+        range: keyRangeAll(),
         reverse: false,
         unique: false,
       });
@@ -756,7 +779,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -773,7 +796,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -793,7 +816,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -816,7 +839,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -836,7 +859,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -872,7 +895,7 @@ export class OrClause<T, TKey> {
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         return ranges.some(([lower, upper]) => {

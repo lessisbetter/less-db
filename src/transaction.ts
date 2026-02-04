@@ -2,7 +2,7 @@
  * Transaction class - provides a user-friendly transaction API.
  */
 
-import type { DBCore, DBCoreTransaction, TransactionMode } from "./dbcore/index.js";
+import type { DBCore, InternalTransaction, TransactionMode } from "./dbcore/index.js";
 import type { Table } from "./table.js";
 import { AbortError, InvalidTableError } from "./errors/index.js";
 
@@ -36,8 +36,8 @@ export interface Transaction {
  * Internal transaction state.
  */
 export interface TransactionState {
-  /** The DBCore transaction */
-  coreTrans: DBCoreTransaction;
+  /** The DBCore transaction (internal type with mode/tables/idbTransaction) */
+  coreTrans: InternalTransaction;
   /** The DBCore instance */
   core: DBCore;
   /** Whether the transaction is active */
@@ -56,7 +56,8 @@ export function createTransactionState(
   tableNames: string[],
   mode: TransactionMode,
 ): TransactionState {
-  const coreTrans = core.transaction(tableNames, mode);
+  // Cast to InternalTransaction since our IDBCore implementation provides these properties
+  const coreTrans = core.transaction(tableNames, mode) as InternalTransaction;
 
   // Create completion promise that tracks the IDB transaction
   const completion = new Promise<void>((resolve, reject) => {

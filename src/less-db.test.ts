@@ -1117,11 +1117,12 @@ describe("LessDB", () => {
       let middlewareCalled = false;
 
       const middleware: Middleware = {
+        stack: "dbcore",
         name: "test-middleware",
         level: 1,
-        create: (downCore: DBCore): DBCore => {
+        create: (downCore: DBCore) => {
           middlewareCalled = true;
-          return downCore;
+          return {};
         },
       };
 
@@ -1135,25 +1136,24 @@ describe("LessDB", () => {
       const operations: string[] = [];
 
       const middleware: Middleware = {
+        stack: "dbcore",
         name: "logging-middleware",
-        create: (downCore: DBCore): DBCore => {
+        create: (downCore: DBCore) => {
           const wrappedTables = new Map<string, DBCoreTable>();
 
           return {
-            tables: downCore.tables,
-            transaction: (tables, mode) => downCore.transaction(tables, mode),
             table: (name: string): DBCoreTable => {
               if (!wrappedTables.has(name)) {
                 const downTable = downCore.table(name);
                 wrappedTables.set(name, {
                   ...downTable,
-                  get: async (trans: DBCoreTransaction, key: unknown) => {
-                    operations.push(`get:${name}:${key}`);
-                    return downTable.get(trans, key);
+                  get: async (req) => {
+                    operations.push(`get:${name}:${req.key}`);
+                    return downTable.get(req);
                   },
-                  mutate: async (trans: DBCoreTransaction, req: DBCoreMutateRequest) => {
+                  mutate: async (req) => {
                     operations.push(`mutate:${name}:${req.type}`);
-                    return downTable.mutate(trans, req);
+                    return downTable.mutate(req);
                   },
                 });
               }
@@ -1178,10 +1178,11 @@ describe("LessDB", () => {
       let middlewareCalled = false;
 
       const middleware: Middleware = {
+        stack: "dbcore",
         name: "test-middleware",
-        create: (downCore: DBCore): DBCore => {
+        create: (downCore: DBCore) => {
           middlewareCalled = true;
-          return downCore;
+          return {};
         },
       };
 
@@ -1197,20 +1198,22 @@ describe("LessDB", () => {
       const order: string[] = [];
 
       const highLevel: Middleware = {
+        stack: "dbcore",
         name: "high-level",
         level: 10,
-        create: (downCore: DBCore): DBCore => {
+        create: (downCore: DBCore) => {
           order.push("high");
-          return downCore;
+          return {};
         },
       };
 
       const lowLevel: Middleware = {
+        stack: "dbcore",
         name: "low-level",
         level: 1,
-        create: (downCore: DBCore): DBCore => {
+        create: (downCore: DBCore) => {
           order.push("low");
-          return downCore;
+          return {};
         },
       };
 
@@ -2702,10 +2705,11 @@ describe("LessDB", () => {
 
       // Add middleware after database is open
       db.use({
+        stack: "dbcore",
         name: "post-open-middleware",
         create: (downCore) => {
           operations.push("middleware-created");
-          return downCore;
+          return {};
         },
       });
 
@@ -2722,11 +2726,12 @@ describe("LessDB", () => {
     it("unuse() rebuilds core when database is already open", async () => {
       let middlewareActive = false;
 
-      const middleware = {
+      const middleware: Middleware = {
+        stack: "dbcore",
         name: "removable-middleware",
         create: (downCore: DBCore) => {
           middlewareActive = true;
-          return downCore;
+          return {};
         },
       };
 
@@ -2739,10 +2744,11 @@ describe("LessDB", () => {
       // Core was rebuilt without middleware
       // Add another middleware to verify rebuild happened
       db.use({
+        stack: "dbcore",
         name: "verify-middleware",
         create: (downCore) => {
           // If previous middleware was truly removed, this is fresh
-          return downCore;
+          return {};
         },
       });
     });

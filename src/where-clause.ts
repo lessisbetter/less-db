@@ -6,6 +6,7 @@ import type { DBCoreTable, DBCoreTransaction, DBCoreKeyRange } from "./dbcore/in
 import {
   keyRangeEqual,
   keyRangeRange,
+  keyRangeAll,
   keyRangeAnyOf,
   keyRangeAbove,
   keyRangeBelow,
@@ -69,7 +70,7 @@ export class WhereClause<T, TKey> {
       const ctx: CollectionContext = {
         table: this.table,
         index: this.indexName,
-        range: keyRangeRange(undefined, undefined),
+        range: keyRangeAll(),
         filter: () => false,
         reverse: false,
         unique: false,
@@ -88,7 +89,7 @@ export class WhereClause<T, TKey> {
   noneOf(values: unknown[]): Collection<T, TKey> {
     if (values.length === 0) {
       // Match everything
-      return this.toCollection(keyRangeRange(undefined, undefined));
+      return this.toCollection(keyRangeAll());
     }
 
     // Use filter for this
@@ -96,7 +97,7 @@ export class WhereClause<T, TKey> {
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         // Get the indexed value from the item
         const indexValue = this.getIndexValue(item);
@@ -171,7 +172,7 @@ export class WhereClause<T, TKey> {
   startsWith(prefix: string): Collection<T, TKey> {
     if (prefix === "") {
       // Empty prefix matches everything
-      return this.toCollection(keyRangeRange(undefined, undefined));
+      return this.toCollection(keyRangeAll());
     }
 
     // Create range from prefix to prefix + max char
@@ -190,7 +191,7 @@ export class WhereClause<T, TKey> {
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -212,7 +213,7 @@ export class WhereClause<T, TKey> {
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -234,7 +235,7 @@ export class WhereClause<T, TKey> {
       const ctx: CollectionContext = {
         table: this.table,
         index: this.indexName,
-        range: keyRangeRange(undefined, undefined),
+        range: keyRangeAll(),
         filter: () => false,
         reverse: false,
         unique: false,
@@ -247,7 +248,7 @@ export class WhereClause<T, TKey> {
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== "string") return false;
@@ -269,7 +270,7 @@ export class WhereClause<T, TKey> {
       const ctx: CollectionContext = {
         table: this.table,
         index: this.indexName,
-        range: keyRangeRange(undefined, undefined),
+        range: keyRangeAll(),
         filter: () => false,
         reverse: false,
         unique: false,
@@ -286,7 +287,7 @@ export class WhereClause<T, TKey> {
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -308,7 +309,7 @@ export class WhereClause<T, TKey> {
       const ctx: CollectionContext = {
         table: this.table,
         index: this.indexName,
-        range: keyRangeRange(undefined, undefined),
+        range: keyRangeAll(),
         filter: () => false,
         reverse: false,
         unique: false,
@@ -321,7 +322,7 @@ export class WhereClause<T, TKey> {
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         if (typeof value !== "string") return false;
@@ -347,7 +348,7 @@ export class WhereClause<T, TKey> {
       const ctx: CollectionContext = {
         table: this.table,
         index: this.indexName,
-        range: keyRangeRange(undefined, undefined),
+        range: keyRangeAll(),
         filter: () => false,
         reverse: false,
         unique: false,
@@ -373,7 +374,7 @@ export class WhereClause<T, TKey> {
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(undefined, undefined),
+      range: keyRangeAll(),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
         return ranges.some(([lower, upper]) => {

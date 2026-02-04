@@ -7,8 +7,11 @@ import {
   keyRangeAnyOf,
   keyRangeAbove,
   keyRangeBelow,
+  keyRangeAll,
+  primaryKeyQuery,
+  indexQuery,
   type DBCore,
-  type DBCoreTransaction,
+  type InternalTransaction,
 } from "./index.js";
 
 describe("DBCore", () => {
@@ -76,18 +79,18 @@ describe("DBCore", () => {
 
   describe("transaction", () => {
     it("creates readonly transaction", () => {
-      const trans = core.transaction(["users"], "readonly");
+      const trans = core.transaction(["users"], "readonly") as InternalTransaction;
       expect(trans.mode).toBe("readonly");
       expect(trans.tables).toEqual(["users"]);
     });
 
     it("creates readwrite transaction", () => {
-      const trans = core.transaction(["users"], "readwrite");
+      const trans = core.transaction(["users"], "readwrite") as InternalTransaction;
       expect(trans.mode).toBe("readwrite");
     });
 
     it("creates multi-table transaction", () => {
-      const trans = core.transaction(["users", "logs"], "readwrite");
+      const trans = core.transaction(["users", "logs"], "readwrite") as InternalTransaction;
       expect(trans.tables).toEqual(["users", "logs"]);
     });
 
@@ -95,7 +98,8 @@ describe("DBCore", () => {
       const trans = core.transaction(["users"], "readwrite");
       const table = core.table("users");
 
-      await table.mutate(trans, {
+      await table.mutate({
+        trans,
         type: "add",
         values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
       });
@@ -104,12 +108,12 @@ describe("DBCore", () => {
 
       // After abort, the add should not have persisted
       const readTrans = core.transaction(["users"], "readonly");
-      const result = await table.query(readTrans, {
-        index: "",
-        range: keyRangeRange(undefined, undefined),
+      const result = await table.query({
+        trans: readTrans,
+        query: primaryKeyQuery(table.schema, keyRangeAll()),
       });
 
-      expect(result.values).toHaveLength(0);
+      expect(result.result).toHaveLength(0);
     });
   });
 
@@ -119,7 +123,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        const result = await table.mutate(trans, {
+        const result = await table.mutate({
+          trans,
           type: "add",
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
@@ -133,7 +138,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        const result = await table.mutate(trans, {
+        const result = await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -150,13 +156,15 @@ describe("DBCore", () => {
         const table = core.table("users");
 
         // Add first user
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "add",
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
 
         // Try to add duplicate email
-        const result = await table.mutate(trans, {
+        const result = await table.mutate({
+          trans,
           type: "add",
           values: [{ name: "Alice2", email: "alice@test.com", age: 25 }],
         });
@@ -170,7 +178,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["logs"], "readwrite");
         const table = core.table("logs");
 
-        const result = await table.mutate(trans, {
+        const result = await table.mutate({
+          trans,
           type: "add",
           values: [{ message: "test log" }],
         });
@@ -183,7 +192,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["settings"], "readwrite");
         const table = core.table("settings");
 
-        const result = await table.mutate(trans, {
+        const result = await table.mutate({
+          trans,
           type: "add",
           values: [{ key: "theme", value: "dark" }],
         });
@@ -197,7 +207,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        const result = await table.mutate(trans, {
+        const result = await table.mutate({
+          trans,
           type: "put",
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
@@ -210,20 +221,22 @@ describe("DBCore", () => {
         const table = core.table("users");
 
         // Add initial user
-        const addResult = await table.mutate(trans, {
+        const addResult = await table.mutate({
+          trans,
           type: "add",
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
         const id = addResult.results![0];
 
         // Update with put
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "put",
           values: [{ id, name: "Alice Updated", email: "alice@test.com", age: 31 }],
         });
 
         // Verify update
-        const user = await table.get(trans, id);
+        const user = await table.get({ trans, key: id });
         expect((user as { name: string }).name).toBe("Alice Updated");
         expect((user as { age: number }).age).toBe(31);
       });
@@ -235,14 +248,16 @@ describe("DBCore", () => {
         const table = core.table("users");
 
         // Add user
-        const addResult = await table.mutate(trans, {
+        const addResult = await table.mutate({
+          trans,
           type: "add",
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
         const id = addResult.results![0];
 
         // Delete
-        const deleteResult = await table.mutate(trans, {
+        const deleteResult = await table.mutate({
+          trans,
           type: "delete",
           keys: [id],
         });
@@ -250,7 +265,7 @@ describe("DBCore", () => {
         expect(deleteResult.numFailures).toBe(0);
 
         // Verify deletion
-        const user = await table.get(trans, id);
+        const user = await table.get({ trans, key: id });
         expect(user).toBeUndefined();
       });
 
@@ -259,7 +274,8 @@ describe("DBCore", () => {
         const table = core.table("users");
 
         // Add users
-        const addResult = await table.mutate(trans, {
+        const addResult = await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -268,13 +284,17 @@ describe("DBCore", () => {
         });
 
         // Delete both
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "delete",
-          keys: addResult.results,
+          keys: addResult.results!,
         });
 
         // Verify
-        const count = await table.count(trans);
+        const count = await table.count({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
+        });
         expect(count).toBe(0);
       });
     });
@@ -285,7 +305,8 @@ describe("DBCore", () => {
         const table = core.table("users");
 
         // Add users
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -294,12 +315,16 @@ describe("DBCore", () => {
         });
 
         // Delete all
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "deleteRange",
-          range: keyRangeRange(undefined, undefined),
+          range: keyRangeAll(),
         });
 
-        const count = await table.count(trans);
+        const count = await table.count({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
+        });
         expect(count).toBe(0);
       });
     });
@@ -309,12 +334,13 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        const addResult = await table.mutate(trans, {
+        const addResult = await table.mutate({
+          trans,
           type: "add",
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
 
-        const user = await table.get(trans, addResult.results![0]);
+        const user = await table.get({ trans, key: addResult.results![0] });
         expect((user as { name: string }).name).toBe("Alice");
       });
 
@@ -322,7 +348,7 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readonly");
         const table = core.table("users");
 
-        const user = await table.get(trans, 999);
+        const user = await table.get({ trans, key: 999 });
         expect(user).toBeUndefined();
       });
     });
@@ -332,7 +358,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        const addResult = await table.mutate(trans, {
+        const addResult = await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -340,7 +367,7 @@ describe("DBCore", () => {
           ],
         });
 
-        const users = await table.getMany(trans, addResult.results!);
+        const users = await table.getMany({ trans, keys: addResult.results! });
         expect(users).toHaveLength(2);
         expect((users[0] as { name: string }).name).toBe("Alice");
         expect((users[1] as { name: string }).name).toBe("Bob");
@@ -350,12 +377,13 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        const addResult = await table.mutate(trans, {
+        const addResult = await table.mutate({
+          trans,
           type: "add",
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
 
-        const users = await table.getMany(trans, [addResult.results![0], 999]);
+        const users = await table.getMany({ trans, keys: [addResult.results![0], 999] });
         expect(users).toHaveLength(2);
         expect((users[0] as { name: string }).name).toBe("Alice");
         expect(users[1]).toBeUndefined();
@@ -367,7 +395,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -375,7 +404,10 @@ describe("DBCore", () => {
           ],
         });
 
-        const count = await table.count(trans);
+        const count = await table.count({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
+        });
         expect(count).toBe(2);
       });
 
@@ -383,7 +415,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -393,19 +426,23 @@ describe("DBCore", () => {
         });
 
         // Count keys >= 2
-        const count = await table.count(trans, keyRangeAbove(1, true));
+        const count = await table.count({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAbove(1, true)),
+        });
         expect(count).toBe(2);
       });
     });
 
     describe("query", () => {
-      let trans: DBCoreTransaction;
+      let trans: ReturnType<typeof core.transaction>;
 
       beforeEach(async () => {
         trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -419,86 +456,86 @@ describe("DBCore", () => {
       it("queries all records", async () => {
         const table = core.table("users");
 
-        const result = await table.query(trans, {
-          index: "",
-          range: keyRangeRange(undefined, undefined),
+        const result = await table.query({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
         });
 
-        expect(result.values).toHaveLength(4);
+        expect(result.result).toHaveLength(4);
         expect(result.keys).toHaveLength(4);
       });
 
       it("queries with equal range", async () => {
         const table = core.table("users");
 
-        const result = await table.query(trans, {
-          index: "name",
-          range: keyRangeEqual("Alice"),
+        const result = await table.query({
+          trans,
+          query: indexQuery(table.schema, "name", keyRangeEqual("Alice")),
         });
 
-        expect(result.values).toHaveLength(1);
-        expect((result.values[0] as { name: string }).name).toBe("Alice");
+        expect(result.result).toHaveLength(1);
+        expect((result.result[0] as { name: string }).name).toBe("Alice");
       });
 
       it("queries with range bounds", async () => {
         const table = core.table("users");
 
         // age >= 30
-        const result = await table.query(trans, {
-          index: "age",
-          range: keyRangeRange(30, undefined, false),
+        const result = await table.query({
+          trans,
+          query: indexQuery(table.schema, "age", keyRangeRange(30, undefined, false)),
         });
 
-        expect(result.values).toHaveLength(2); // Alice (30) and Charlie (35)
+        expect(result.result).toHaveLength(2); // Alice (30) and Charlie (35)
       });
 
       it("queries with limit", async () => {
         const table = core.table("users");
 
-        const result = await table.query(trans, {
-          index: "",
-          range: keyRangeRange(undefined, undefined),
+        const result = await table.query({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
           limit: 2,
         });
 
-        expect(result.values).toHaveLength(2);
+        expect(result.result).toHaveLength(2);
       });
 
       it("queries with offset", async () => {
         const table = core.table("users");
 
-        const result = await table.query(trans, {
-          index: "",
-          range: keyRangeRange(undefined, undefined),
+        const result = await table.query({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
           offset: 2,
         });
 
-        expect(result.values).toHaveLength(2);
+        expect(result.result).toHaveLength(2);
       });
 
       it("queries in reverse", async () => {
         const table = core.table("users");
 
-        const result = await table.query(trans, {
-          index: "",
-          range: keyRangeRange(undefined, undefined),
+        const result = await table.query({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
           reverse: true,
         });
 
-        expect(result.values).toHaveLength(4);
+        expect(result.result).toHaveLength(4);
         // Last added should be first in reverse
-        expect((result.values[0] as { name: string }).name).toBe("Diana");
+        expect((result.result[0] as { name: string }).name).toBe("Diana");
       });
 
       it("queries with anyOf", async () => {
         const table = core.table("users");
 
-        const result = await table.query(trans, {
-          index: "age",
-          range: keyRangeAnyOf([25, 35]),
+        const result = await table.query({
+          trans,
+          query: indexQuery(table.schema, "age", keyRangeAnyOf([25, 35])),
         });
 
-        expect(result.values).toHaveLength(3); // Bob, Diana (25), Charlie (35)
+        expect(result.result).toHaveLength(3); // Bob, Diana (25), Charlie (35)
       });
     });
 
@@ -507,7 +544,8 @@ describe("DBCore", () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
-        await table.mutate(trans, {
+        await table.mutate({
+          trans,
           type: "add",
           values: [
             { name: "Alice", email: "alice@test.com", age: 30 },
@@ -516,50 +554,22 @@ describe("DBCore", () => {
         });
 
         const collected: unknown[] = [];
-
-        await table.openCursor(
+        let cursor = await table.openCursor({
           trans,
-          { index: "", range: keyRangeRange(undefined, undefined) },
-          (cursor) => {
-            if (cursor) {
-              collected.push(cursor.value);
-              cursor.continue();
-            }
-          },
-        );
-
-        expect(collected).toHaveLength(2);
-      });
-
-      it("can stop early", async () => {
-        const trans = core.transaction(["users"], "readwrite");
-        const table = core.table("users");
-
-        await table.mutate(trans, {
-          type: "add",
-          values: [
-            { name: "Alice", email: "alice@test.com", age: 30 },
-            { name: "Bob", email: "bob@test.com", age: 25 },
-            { name: "Charlie", email: "charlie@test.com", age: 35 },
-          ],
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
         });
 
-        const collected: unknown[] = [];
-
-        await table.openCursor(
-          trans,
-          { index: "", range: keyRangeRange(undefined, undefined) },
-          (cursor) => {
-            if (cursor) {
-              collected.push(cursor.value);
-              if (collected.length >= 2) {
-                cursor.stop();
-              } else {
-                cursor.continue();
-              }
-            }
-          },
-        );
+        while (cursor) {
+          collected.push(cursor.value);
+          cursor.continue();
+          // Need to wait for next cursor position
+          cursor = await table.openCursor({
+            trans,
+            query: primaryKeyQuery(table.schema, keyRangeAll()),
+            offset: collected.length,
+            limit: 1,
+          });
+        }
 
         expect(collected).toHaveLength(2);
       });
@@ -572,7 +582,8 @@ describe("DBCore", () => {
       const table = core.table("users");
 
       // DBCore returns failures in response rather than rejecting
-      const result = await table.mutate(trans, {
+      const result = await table.mutate({
+        trans,
         type: "add",
         values: [{ name: "Test", email: "test@test.com", age: 20 }],
       });
@@ -583,13 +594,11 @@ describe("DBCore", () => {
       expect(result.failures![0].message).toContain("readonly");
     });
 
-    // Note: get with non-existent key is already tested in describe('get')
-
     it("handles getMany with empty array", async () => {
       const trans = core.transaction(["users"], "readonly");
       const table = core.table("users");
 
-      const result = await table.getMany(trans, []);
+      const result = await table.getMany({ trans, keys: [] });
       expect(result).toEqual([]);
     });
 
@@ -597,7 +606,8 @@ describe("DBCore", () => {
       const trans = core.transaction(["users"], "readwrite");
       const table = core.table("users");
 
-      const result = await table.mutate(trans, {
+      const result = await table.mutate({
+        trans,
         type: "delete",
         keys: [],
       });
@@ -609,7 +619,8 @@ describe("DBCore", () => {
       const trans = core.transaction(["users"], "readwrite");
       const table = core.table("users");
 
-      const result = await table.mutate(trans, {
+      const result = await table.mutate({
+        trans,
         type: "add",
         values: [],
       });
@@ -622,7 +633,10 @@ describe("DBCore", () => {
       const trans = core.transaction(["users"], "readonly");
       const table = core.table("users");
 
-      const count = await table.count(trans);
+      const count = await table.count({
+        trans,
+        query: primaryKeyQuery(table.schema, keyRangeAll()),
+      });
       expect(count).toBe(0);
     });
 
@@ -630,12 +644,12 @@ describe("DBCore", () => {
       const trans = core.transaction(["users"], "readonly");
       const table = core.table("users");
 
-      const result = await table.query(trans, {
-        index: "",
-        range: keyRangeRange(undefined, undefined),
+      const result = await table.query({
+        trans,
+        query: primaryKeyQuery(table.schema, keyRangeAll()),
       });
 
-      expect(result.values).toEqual([]);
+      expect(result.result).toEqual([]);
       expect(result.keys).toEqual([]);
     });
   });

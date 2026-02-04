@@ -2,9 +2,8 @@
  * Table class - the primary API for working with a single table.
  */
 
-import type { DBCoreTable, DBCoreTransaction } from "./dbcore/index.js";
-import { keyRangeRange } from "./dbcore/index.js";
-import type { TableSchema } from "./schema-parser.js";
+import type { DBCoreTable, DBCoreTransaction, DBCoreTableSchema } from "./dbcore/index.js";
+import { keyRangeAll, primaryKeyQuery } from "./dbcore/index.js";
 import { Collection, createCollectionContext } from "./collection.js";
 import { WhereClause } from "./where-clause.js";
 import { createTableHooks, type TableHooks } from "./events/index.js";
@@ -16,8 +15,8 @@ import { ConstraintError } from "./errors/index.js";
 export class Table<T, TKey> {
   /** Table name */
   readonly name: string;
-  /** Table schema */
-  readonly schema: TableSchema;
+  /** Table schema (DBCore schema) */
+  readonly schema: DBCoreTableSchema;
   /** Table hooks for lifecycle events */
   readonly hook: TableHooks<T, TKey>;
 
@@ -47,7 +46,7 @@ export class Table<T, TKey> {
    */
   async get(key: TKey): Promise<T | undefined> {
     const trans = this._getTransaction();
-    let value = (await this._coreTable.get(trans, key)) as T | undefined;
+    let value = (await this._coreTable.get({ trans, key })) as T | undefined;
 
     // Apply reading hook
     if (value !== undefined && this.hook.reading.hasHandlers()) {
@@ -69,8 +68,9 @@ export class Table<T, TKey> {
     // Fire creating hook
     this.hook.creating.fire(key, item);
 
-    const result = await this._coreTable.mutate(trans, {
+    const result = await this._coreTable.mutate({
       type: "add",
+      trans,
       values: [item],
       keys: key !== undefined ? [key] : undefined,
     });
@@ -93,8 +93,9 @@ export class Table<T, TKey> {
   async put(item: T, key?: TKey): Promise<TKey> {
     const trans = this._getTransaction();
 
-    const result = await this._coreTable.mutate(trans, {
+    const result = await this._coreTable.mutate({
       type: "put",
+      trans,
       values: [item],
       keys: key !== undefined ? [key] : undefined,
     });
@@ -119,7 +120,7 @@ export class Table<T, TKey> {
     const trans = this._getTransaction();
 
     // Get existing item
-    const existing = (await this._coreTable.get(trans, key)) as T | undefined;
+    const existing = (await this._coreTable.get({ trans, key })) as T | undefined;
     if (!existing) {
       return 0;
     }
@@ -130,8 +131,9 @@ export class Table<T, TKey> {
     // Merge changes
     const updated = { ...existing, ...changes } as T;
 
-    const result = await this._coreTable.mutate(trans, {
+    const result = await this._coreTable.mutate({
       type: "put",
+      trans,
       values: [updated],
       keys: [key],
     });
@@ -154,15 +156,16 @@ export class Table<T, TKey> {
 
     if (lookupKey !== undefined) {
       // Try to get existing item
-      const existing = (await this._coreTable.get(trans, lookupKey)) as T | undefined;
+      const existing = (await this._coreTable.get({ trans, key: lookupKey })) as T | undefined;
 
       if (existing) {
         // Merge and update
         const merged = { ...existing, ...item } as T;
         this.hook.updating.fire(item as Partial<T>, lookupKey, existing);
 
-        const result = await this._coreTable.mutate(trans, {
+        const result = await this._coreTable.mutate({
           type: "put",
+          trans,
           values: [merged],
           keys: [lookupKey],
         });
@@ -179,8 +182,9 @@ export class Table<T, TKey> {
     // Item doesn't exist, add it
     this.hook.creating.fire(lookupKey, item as T);
 
-    const result = await this._coreTable.mutate(trans, {
+    const result = await this._coreTable.mutate({
       type: "add",
+      trans,
       values: [item],
       keys: lookupKey !== undefined ? [lookupKey] : undefined,
     });
@@ -205,14 +209,15 @@ export class Table<T, TKey> {
 
     // Get existing for hook
     if (this.hook.deleting.hasHandlers()) {
-      const existing = (await this._coreTable.get(trans, key)) as T | undefined;
+      const existing = (await this._coreTable.get({ trans, key })) as T | undefined;
       if (existing) {
         this.hook.deleting.fire(key, existing);
       }
     }
 
-    await this._coreTable.mutate(trans, {
+    await this._coreTable.mutate({
       type: "delete",
+      trans,
       keys: [key],
     });
   }
@@ -226,7 +231,7 @@ export class Table<T, TKey> {
    */
   async bulkGet(keys: TKey[]): Promise<(T | undefined)[]> {
     const trans = this._getTransaction();
-    const values = (await this._coreTable.getMany(trans, keys)) as (T | undefined)[];
+    const values = (await this._coreTable.getMany({ trans, keys })) as (T | undefined)[];
 
     // Apply reading hooks
     if (this.hook.reading.hasHandlers()) {
@@ -251,8 +256,9 @@ export class Table<T, TKey> {
       this.hook.creating.fire(keys?.[i], item);
     });
 
-    const result = await this._coreTable.mutate(trans, {
+    const result = await this._coreTable.mutate({
       type: "add",
+      trans,
       values: items,
       keys,
     });
@@ -273,8 +279,9 @@ export class Table<T, TKey> {
   async bulkPut(items: T[], keys?: TKey[]): Promise<TKey[]> {
     const trans = this._getTransaction();
 
-    const result = await this._coreTable.mutate(trans, {
+    const result = await this._coreTable.mutate({
       type: "put",
+      trans,
       values: items,
       keys,
     });
@@ -301,7 +308,7 @@ export class Table<T, TKey> {
 
     // Get all existing items
     const keys = keysAndChanges.map((kc) => kc.key);
-    const existingItems = (await this._coreTable.getMany(trans, keys)) as (T | undefined)[];
+    const existingItems = (await this._coreTable.getMany({ trans, keys })) as (T | undefined)[];
 
     // Prepare updates for items that exist
     const updates: { key: TKey; value: T }[] = [];
@@ -320,8 +327,9 @@ export class Table<T, TKey> {
     }
 
     // Put all updates
-    const result = await this._coreTable.mutate(trans, {
+    const result = await this._coreTable.mutate({
       type: "put",
+      trans,
       values: updates.map((u) => u.value),
       keys: updates.map((u) => u.key),
     });
@@ -342,8 +350,9 @@ export class Table<T, TKey> {
   async bulkDelete(keys: TKey[]): Promise<void> {
     const trans = this._getTransaction();
 
-    await this._coreTable.mutate(trans, {
+    await this._coreTable.mutate({
       type: "delete",
+      trans,
       keys,
     });
   }
@@ -358,9 +367,10 @@ export class Table<T, TKey> {
   async clear(): Promise<void> {
     const trans = this._getTransaction();
 
-    await this._coreTable.mutate(trans, {
+    await this._coreTable.mutate({
       type: "deleteRange",
-      range: keyRangeRange(undefined, undefined),
+      trans,
+      range: keyRangeAll(),
     });
   }
 
@@ -369,7 +379,10 @@ export class Table<T, TKey> {
    */
   async count(): Promise<number> {
     const trans = this._getTransaction();
-    return this._coreTable.count(trans);
+    return this._coreTable.count({
+      trans,
+      query: primaryKeyQuery(this.schema, keyRangeAll()),
+    });
   }
 
   /**

@@ -49,14 +49,17 @@ interface VersionDefinition {
 
 /**
  * Middleware for wrapping database operations.
+ * Follows Dexie.js middleware pattern for compatibility.
  */
 export interface Middleware {
-  /** Middleware name (for debugging) */
-  name: string;
-  /** Execution order (lower = closer to IndexedDB). Default: 0 */
+  /** Stack identifier - must be "dbcore" for DBCore middleware */
+  stack: "dbcore";
+  /** Middleware name (for identification and replacement) */
+  name?: string;
+  /** Execution order (lower = closer to IndexedDB). Default: 10 */
   level?: number;
-  /** Create wrapped DBCore */
-  create(downCore: DBCore): DBCore;
+  /** Create wrapped DBCore. Returns partial DBCore to be merged with down. */
+  create(downCore: DBCore): Partial<DBCore>;
 }
 
 /**
@@ -568,11 +571,21 @@ export class LessDB {
   /**
    * Register middleware to wrap database operations.
    * Middleware is applied in level order (lowest first, closest to IndexedDB).
+   *
+   * Follows Dexie.js middleware pattern:
+   * - `stack: "dbcore"` identifies this as a DBCore middleware
+   * - `create()` receives the downstream DBCore and returns a partial DBCore
+   * - `level` controls execution order (lower = closer to IndexedDB, default: 10)
+   * - `name` allows middleware to be replaced via `unuse({stack, name})`
    */
   use(middleware: Middleware): this {
+    // If middleware has a name, replace any existing middleware with same name
+    if (middleware.name) {
+      this.middleware = this.middleware.filter((m) => m.name !== middleware.name);
+    }
     this.middleware.push(middleware);
-    // Sort by level (lowest first)
-    this.middleware.sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+    // Sort by level (lowest first) - default level is 10
+    this.middleware.sort((a, b) => (a.level ?? 10) - (b.level ?? 10));
 
     // If database is already open, rebuild the core with new middleware
     if (this.state.isOpen && this.state.idbDatabase) {
@@ -584,22 +597,36 @@ export class LessDB {
 
   /**
    * Unregister middleware.
+   * Can pass the middleware instance or an object with {stack, name} to match by name.
    */
-  unuse(middleware: Middleware): this {
-    const idx = this.middleware.indexOf(middleware);
-    if (idx !== -1) {
-      this.middleware.splice(idx, 1);
-
-      // If database is already open, rebuild the core without the middleware
-      if (this.state.isOpen && this.state.idbDatabase) {
-        this.state.core = this.buildCore(this.state.idbDatabase);
+  unuse(
+    middleware: Middleware | { stack: "dbcore"; name: string; create?: (downCore: DBCore) => Partial<DBCore> },
+  ): this {
+    if ("create" in middleware && typeof middleware.create === "function") {
+      // Passed middleware instance - find by reference or name
+      const idx = this.middleware.indexOf(middleware as Middleware);
+      if (idx !== -1) {
+        this.middleware.splice(idx, 1);
+      } else if (middleware.name) {
+        this.middleware = this.middleware.filter((m) => m.name !== middleware.name);
       }
+    } else if (middleware.name) {
+      // Passed {stack, name} - find by name
+      this.middleware = this.middleware.filter((m) => m.name !== middleware.name);
     }
+
+    // If database is already open, rebuild the core without the middleware
+    if (this.state.isOpen && this.state.idbDatabase) {
+      this.state.core = this.buildCore(this.state.idbDatabase);
+    }
+
     return this;
   }
 
   /**
    * Build the DBCore with middleware applied.
+   * Follows Dexie.js pattern: each middleware's create() returns a partial DBCore
+   * that is merged with the downstream core.
    */
   private buildCore(db: IDBDatabase): DBCore {
     // Start with the base IDB core
@@ -607,8 +634,17 @@ export class LessDB {
 
     // Apply middleware in level order (lowest to highest)
     // This means lowest level middleware is closest to IndexedDB
+    // Each middleware returns a partial DBCore that is merged with the downstream
     for (const mw of this.middleware) {
-      core = mw.create(core);
+      const partialCore = mw.create(core);
+      const downCore = core;
+      // Merge partial onto a new object that delegates to downCore for missing methods
+      core = {
+        stack: partialCore.stack ?? downCore.stack,
+        schema: partialCore.schema ?? downCore.schema,
+        table: partialCore.table?.bind(partialCore) ?? downCore.table.bind(downCore),
+        transaction: partialCore.transaction?.bind(partialCore) ?? downCore.transaction.bind(downCore),
+      };
     }
 
     return core;

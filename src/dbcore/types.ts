@@ -3,6 +3,8 @@
  *
  * This layer provides a clean interface for all database operations,
  * enabling middleware to intercept and modify operations.
+ *
+ * API design follows Dexie.js for compatibility with Dexie middleware.
  */
 
 import type { TableSchema } from "../schema-parser.js";
@@ -30,27 +32,98 @@ export enum DBCoreRangeType {
  * Key range specification.
  */
 export interface DBCoreKeyRange {
-  type: DBCoreRangeType;
+  readonly type: DBCoreRangeType;
   /** Lower bound (for Range) or the value (for Equal/NotEqual) */
-  lower?: unknown;
+  readonly lower?: unknown;
   /** Upper bound (for Range) */
-  upper?: unknown;
+  readonly upper?: unknown;
   /** Include lower bound in range */
-  lowerOpen?: boolean;
+  readonly lowerOpen?: boolean;
   /** Include upper bound in range */
-  upperOpen?: boolean;
+  readonly upperOpen?: boolean;
   /** Set of values (for Any) */
-  values?: unknown[];
+  readonly values?: unknown[];
 }
 
 /**
- * Query request specification.
+ * Transaction interface.
+ * Middleware can attach custom properties via bracket notation.
  */
-export interface DBCoreQueryRequest {
-  /** Index to query (empty string for primary key) */
-  index: string;
+export interface DBCoreTransaction {
+  /** Abort the transaction */
+  abort(): void;
+}
+
+/**
+ * Internal transaction type with specific properties.
+ * This extends DBCoreTransaction with properties our implementation uses.
+ */
+export interface InternalTransaction extends DBCoreTransaction {
+  /** Transaction mode */
+  mode: TransactionMode;
+  /** Tables in this transaction */
+  tables: string[];
+  /** Underlying IDB transaction */
+  idbTransaction: IDBTransaction;
+  /** Allow custom properties for middleware (e.g., __syncOrigin) */
+  [key: string]: unknown;
+}
+
+/**
+ * Index specification for queries.
+ */
+export interface DBCoreIndex {
+  /** Index name, or empty string for primary key */
+  readonly name: string;
+  /** Key path */
+  readonly keyPath: string | null;
+  /** Whether this is the primary key */
+  readonly isPrimaryKey?: boolean;
+  /** Whether keys are auto-generated */
+  readonly autoIncrement?: boolean;
+  /** Whether index values must be unique */
+  readonly unique?: boolean;
+}
+
+/**
+ * Query specification (index + range).
+ */
+export interface DBCoreQuery {
+  /** Index to query */
+  index: DBCoreIndex;
   /** Key range to match */
   range: DBCoreKeyRange;
+}
+
+// ============================================
+// Request types - all include trans
+// ============================================
+
+/**
+ * Get single item request.
+ */
+export interface DBCoreGetRequest {
+  trans: DBCoreTransaction;
+  key: unknown;
+}
+
+/**
+ * Get multiple items request.
+ */
+export interface DBCoreGetManyRequest {
+  trans: DBCoreTransaction;
+  keys: unknown[];
+}
+
+/**
+ * Query request.
+ */
+export interface DBCoreQueryRequest {
+  trans: DBCoreTransaction;
+  /** Query specification (index + range) */
+  query: DBCoreQuery;
+  /** Whether to return values (default: true) */
+  values?: boolean;
   /** Maximum number of results */
   limit?: number;
   /** Number of results to skip */
@@ -62,125 +135,228 @@ export interface DBCoreQueryRequest {
 }
 
 /**
+ * Open cursor request.
+ */
+export interface DBCoreOpenCursorRequest {
+  trans: DBCoreTransaction;
+  /** Query specification (index + range) */
+  query: DBCoreQuery;
+  /** Whether to return values (default: true) */
+  values?: boolean;
+  /** Maximum number of results */
+  limit?: number;
+  /** Number of results to skip */
+  offset?: number;
+  /** Query direction */
+  reverse?: boolean;
+  /** Only return unique keys */
+  unique?: boolean;
+}
+
+/**
+ * Count request.
+ */
+export interface DBCoreCountRequest {
+  trans: DBCoreTransaction;
+  query: DBCoreQuery;
+}
+
+/**
  * Query response.
  */
 export interface DBCoreQueryResponse {
-  /** Matching values */
-  values: unknown[];
+  /** Matching values (if requested) */
+  result: unknown[];
   /** Matching primary keys */
-  keys: unknown[];
+  keys?: unknown[];
 }
 
 /**
  * Cursor for iterating over results.
  */
 export interface DBCoreCursor {
-  /** Current key */
-  key: unknown;
+  /** Transaction this cursor belongs to */
+  readonly trans: DBCoreTransaction;
+  /** Current index key */
+  readonly key: unknown;
   /** Current primary key */
-  primaryKey: unknown;
+  readonly primaryKey: unknown;
   /** Current value */
-  value: unknown;
-  /** Move to next item */
-  continue(): void;
+  readonly value?: unknown;
+  /** Whether iteration is complete */
+  readonly done?: boolean;
+  /** Move to next item, optionally jumping to a specific key */
+  continue(key?: unknown): void;
   /** Move forward by count items */
   advance(count: number): void;
   /** Stop iteration */
-  stop(): void;
+  stop(value?: unknown): void;
+  /** Fail with error */
+  fail(error: Error): void;
 }
 
-/**
- * Cursor callback.
- */
-export type DBCoreCursorCallback = (cursor: DBCoreCursor | null) => void;
+// ============================================
+// Mutation types
+// ============================================
 
 /**
- * Mutation request for add/put/delete operations.
+ * Add request.
  */
-export interface DBCoreMutateRequest {
-  /** Type of mutation */
-  type: "add" | "put" | "delete" | "deleteRange";
-  /** Values to add/put (for add/put) */
-  values?: unknown[];
-  /** Keys for the values (for outbound keys) */
+export interface DBCoreAddRequest {
+  type: "add";
+  trans: DBCoreTransaction;
+  values: readonly unknown[];
   keys?: unknown[];
-  /** Range to delete (for deleteRange) */
-  range?: DBCoreKeyRange;
 }
+
+/**
+ * Put request.
+ */
+export interface DBCorePutRequest {
+  type: "put";
+  trans: DBCoreTransaction;
+  values: readonly unknown[];
+  keys?: unknown[];
+  /** Criteria for targeted updates */
+  criteria?: {
+    index: string | null;
+    range: DBCoreKeyRange;
+  };
+  /** Common changes for all items */
+  changeSpec?: { [keyPath: string]: unknown };
+}
+
+/**
+ * Delete request.
+ */
+export interface DBCoreDeleteRequest {
+  type: "delete";
+  trans: DBCoreTransaction;
+  keys: unknown[];
+  /** Criteria for targeted deletes */
+  criteria?: {
+    index: string | null;
+    range: DBCoreKeyRange;
+  };
+}
+
+/**
+ * Delete range request.
+ */
+export interface DBCoreDeleteRangeRequest {
+  type: "deleteRange";
+  trans: DBCoreTransaction;
+  range: DBCoreKeyRange;
+}
+
+/**
+ * Union of all mutation request types.
+ */
+export type DBCoreMutateRequest =
+  | DBCoreAddRequest
+  | DBCorePutRequest
+  | DBCoreDeleteRequest
+  | DBCoreDeleteRangeRequest;
 
 /**
  * Mutation response.
  */
 export interface DBCoreMutateResponse {
-  /** Number of records affected */
+  /** Number of failed operations */
   numFailures: number;
-  /** Keys of added/updated records */
+  /** Keys of added/updated records (for add/put) */
   results?: unknown[];
-  /** Failures with their keys */
-  failures?: Record<number, Error>;
+  /** Failures indexed by operation number */
+  failures?: { [operationNumber: number]: Error };
   /** Last inserted key (for auto-increment) */
-  lastKey?: unknown;
+  lastResult?: unknown;
 }
 
+// ============================================
+// Table schema
+// ============================================
+
 /**
- * Transaction interface.
+ * Table schema for DBCore.
  */
-export interface DBCoreTransaction {
-  /** Transaction mode */
-  mode: TransactionMode;
-  /** Tables in this transaction */
-  tables: string[];
-  /** Underlying IDB transaction */
-  idbTransaction: IDBTransaction;
-  /** Abort the transaction */
-  abort(): void;
+export interface DBCoreTableSchema {
+  readonly name: string;
+  readonly primaryKey: DBCoreIndex;
+  readonly indexes: readonly DBCoreIndex[];
 }
+
+// ============================================
+// Table interface
+// ============================================
 
 /**
  * Table interface for low-level operations.
+ * All methods take a single request object containing the transaction.
  */
 export interface DBCoreTable {
   /** Table name */
-  name: string;
+  readonly name: string;
   /** Table schema */
-  schema: TableSchema;
+  readonly schema: DBCoreTableSchema;
 
   /** Get a single value by key */
-  get(trans: DBCoreTransaction, key: unknown): Promise<unknown>;
+  get(req: DBCoreGetRequest): Promise<unknown>;
 
   /** Get multiple values by keys */
-  getMany(trans: DBCoreTransaction, keys: unknown[]): Promise<unknown[]>;
+  getMany(req: DBCoreGetManyRequest): Promise<unknown[]>;
 
   /** Query the table */
-  query(trans: DBCoreTransaction, request: DBCoreQueryRequest): Promise<DBCoreQueryResponse>;
+  query(req: DBCoreQueryRequest): Promise<DBCoreQueryResponse>;
 
   /** Open a cursor for iteration */
-  openCursor(
-    trans: DBCoreTransaction,
-    request: DBCoreQueryRequest,
-    callback: DBCoreCursorCallback,
-  ): Promise<void>;
+  openCursor(req: DBCoreOpenCursorRequest): Promise<DBCoreCursor | null>;
 
   /** Count matching records */
-  count(trans: DBCoreTransaction, range?: DBCoreKeyRange): Promise<number>;
+  count(req: DBCoreCountRequest): Promise<number>;
 
   /** Mutate records (add/put/delete) */
-  mutate(trans: DBCoreTransaction, request: DBCoreMutateRequest): Promise<DBCoreMutateResponse>;
+  mutate(req: DBCoreMutateRequest): Promise<DBCoreMutateResponse>;
 }
+
+// ============================================
+// Database schema
+// ============================================
+
+/**
+ * Database schema for DBCore.
+ */
+export interface DBCoreSchema {
+  readonly name: string;
+  readonly tables: readonly DBCoreTableSchema[];
+}
+
+// ============================================
+// Core interface
+// ============================================
 
 /**
  * Core database interface.
  */
 export interface DBCore {
-  /** All tables */
-  tables: Map<string, DBCoreTable>;
+  /** Stack identifier for middleware */
+  readonly stack: "dbcore";
+
+  /** Database schema */
+  readonly schema: DBCoreSchema;
 
   /** Get a table by name */
   table(name: string): DBCoreTable;
 
   /** Create a transaction */
-  transaction(tables: string[], mode: TransactionMode): DBCoreTransaction;
+  transaction(
+    tables: string[],
+    mode: TransactionMode,
+  ): DBCoreTransaction;
 }
+
+// ============================================
+// Helper functions
+// ============================================
 
 /**
  * Create an equal key range.
@@ -245,4 +421,84 @@ export function keyRangeBelow(value: unknown, open = true): DBCoreKeyRange {
     lowerOpen: true,
     upperOpen: open,
   };
+}
+
+/**
+ * Create a full range (matches all keys).
+ */
+export function keyRangeAll(): DBCoreKeyRange {
+  return {
+    type: DBCoreRangeType.Range,
+    lower: undefined,
+    upper: undefined,
+    lowerOpen: true,
+    upperOpen: true,
+  };
+}
+
+/**
+ * Create a DBCoreIndex from a TableSchema primary key or index.
+ */
+export function toDBCoreIndex(
+  name: string,
+  keyPath: string | null,
+  options?: { isPrimaryKey?: boolean; autoIncrement?: boolean; unique?: boolean },
+): DBCoreIndex {
+  return {
+    name,
+    keyPath,
+    isPrimaryKey: options?.isPrimaryKey,
+    autoIncrement: options?.autoIncrement,
+    unique: options?.unique ?? options?.isPrimaryKey,
+  };
+}
+
+/**
+ * Create a DBCoreTableSchema from a TableSchema.
+ */
+export function toDBCoreTableSchema(name: string, schema: TableSchema): DBCoreTableSchema {
+  const primaryKey = toDBCoreIndex(
+    schema.primaryKey.name,
+    schema.primaryKey.keyPath,
+    {
+      isPrimaryKey: true,
+      autoIncrement: schema.primaryKey.auto,
+      unique: true,
+    },
+  );
+
+  const indexes = schema.indexes.map((idx) =>
+    toDBCoreIndex(idx.name, idx.keyPath, { unique: idx.unique }),
+  );
+
+  return { name, primaryKey, indexes };
+}
+
+/**
+ * Create a DBCoreQuery for primary key lookup.
+ */
+export function primaryKeyQuery(
+  schema: DBCoreTableSchema,
+  range: DBCoreKeyRange,
+): DBCoreQuery {
+  return {
+    index: schema.primaryKey,
+    range,
+  };
+}
+
+/**
+ * Create a DBCoreQuery for index lookup.
+ */
+export function indexQuery(
+  schema: DBCoreTableSchema,
+  indexName: string,
+  range: DBCoreKeyRange,
+): DBCoreQuery {
+  const index = schema.indexes.find((idx) => idx.name === indexName);
+  if (!index) {
+    // Fall back to primary key if index not found
+    return primaryKeyQuery(schema, range);
+  }
+  return { index, range };
 }

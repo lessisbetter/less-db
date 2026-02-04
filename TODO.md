@@ -70,23 +70,320 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 ### Infrastructure
 
 - [x] TypeScript with strict types
-- [x] Vitest test suite (255 tests passing)
+- [x] Vitest test suite (423 tests passing)
 - [x] ~80% code coverage
 
 ---
 
 ## Remaining 🚧
 
-### Phase 4: Polish
+### Phase 4: Dexie Deep Alignment
+
+Based on comprehensive analysis of Dexie.js source code, these patterns are critical for full compatibility and advanced use cases like sync.
+
+#### 4.1 Transaction Management (High Priority)
+
+##### 4.1.1 Implicit Transactions
+
+**Goal**: Auto-create transaction for operations outside explicit transactions (like Dexie does).
+
+**Dexie reference**: `src/classes/Table.ts` - table methods check for ambient transaction
+
+**Implementation tasks**:
+
+- [ ] Add `getCurrentTransaction()` helper that checks for ambient transaction
+- [ ] Modify Table methods to use ambient transaction if available, else create implicit one
+- [ ] Ensure implicit transactions are single-operation (commit after each op)
+- [ ] Add tests for implicit vs explicit transaction behavior
+
+**Example behavior**:
+
+```typescript
+// Should work without explicit db.open() or transaction
+const user = await db.users.get(1); // Auto-creates readonly transaction
+await db.users.add({ name: "Alice" }); // Auto-creates readwrite transaction
+```
+
+##### 4.1.2 PSD (Promise-Specific Data)
+
+**Goal**: Track transaction context across async boundaries so nested calls reuse parent transaction.
+
+**Dexie reference**: `src/helpers/promise.ts` - PSD implementation
+
+**Implementation options**:
+
+1. **Zone.js pattern** (Dexie's approach)
+   - Wrap Promise.prototype.then to propagate context
+   - Store transaction in global PSD object
+   - Most compatible but invasive
+
+2. **AsyncLocalStorage** (Node.js only)
+   - Use Node's `AsyncLocalStorage` for server-side
+   - Clean but not browser-compatible
+
+3. **Explicit context passing** (Least invasive)
+   - Require transaction to be passed explicitly
+   - Less ergonomic but simpler
+
+**Implementation tasks**:
+
+- [ ] Research AsyncLocalStorage browser alternatives (none reliable as of 2024)
+- [ ] Implement PSD pattern following Dexie's `src/helpers/promise.ts`
+- [ ] Create `usePSD()` wrapper for transaction functions
+- [ ] Wrap internal promises to propagate PSD
+- [ ] Add `PSD.trans` property for ambient transaction access
+- [ ] Add tests for PSD propagation across async boundaries
+
+##### 4.1.3 Nested Transaction Reuse
+
+**Goal**: When nested transaction requests subset of parent's tables, reuse parent.
+
+**Dexie reference**: `src/classes/Dexie/dexie-open.ts` - transaction reuse logic
+
+**Implementation tasks**:
+
+- [ ] Check for active parent transaction when starting new transaction
+- [ ] Validate table subset (nested tables ⊆ parent tables)
+- [ ] Validate mode compatibility (readonly can nest in readwrite)
+- [ ] Return parent transaction if compatible, else queue or throw
+- [ ] Add `maxWait` option for queuing behavior (like Dexie)
+
+##### 4.1.4 Blocked Function Queue
+
+**Goal**: Queue operations waiting for transaction access instead of failing.
+
+**Dexie reference**: `src/classes/Dexie/dexie-open.ts` - `blockedFunc` handling
+
+**Implementation tasks**:
+
+- [ ] Add transaction wait queue per table set
+- [ ] Implement `waitForTransaction()` with timeout
+- [ ] Queue blocked functions when transaction unavailable
+- [ ] Execute queued functions when transaction becomes available
+- [ ] Add configurable timeout (default: 10 seconds like Dexie)
+
+---
+
+#### 4.2 Error Handling (High Priority)
+
+##### 4.2.1 Expanded Error Types
+
+**Goal**: Match Dexie's complete error hierarchy.
+
+**Dexie reference**: `src/errors/index.ts`
+
+**New error types to add**:
+
+- [ ] `DatabaseClosedError` - Database was closed
+- [ ] `InvalidAccessError` - Access violation
+- [ ] `InvalidArgumentError` - Bad argument passed
+- [ ] `MissingAPIError` - IndexedDB not available
+- [ ] `NoSuchDatabaseError` - Database doesn't exist
+- [ ] `OpenFailedError` - Failed to open database
+- [ ] `PrematureCommitError` - Transaction committed early
+- [ ] `QuotaExceededError` - Storage quota exceeded
+- [ ] `ReadOnlyError` - Write in readonly transaction
+- [ ] `SchemaError` - Schema definition error
+- [ ] `SubTransactionError` - Nested transaction error
+- [ ] `TimeoutError` - Operation timeout
+- [ ] `TransactionInactiveError` - Transaction no longer active
+- [ ] `UnknownError` - Unknown/unexpected error
+- [ ] `UnsupportedError` - Unsupported operation
+- [ ] `UpgradeError` - Version upgrade failed
+- [ ] `VersionChangeError` - Version change event error
+- [ ] `VersionError` - Version mismatch
+
+##### 4.2.2 Type-Based Error Catching
+
+**Goal**: Enable `promise.catch(ErrorType, handler)` pattern.
+
+**Dexie reference**: `src/helpers/promise.ts` - Promise extension
+
+**Implementation tasks**:
+
+- [ ] Create `LessDBPromise<T>` class extending Promise
+- [ ] Add overloaded `.catch()` that accepts error constructor as first arg
+- [ ] Implement type checking in catch handler
+- [ ] Chain multiple type-based catches correctly
+- [ ] Return all promises from Table/Collection methods as LessDBPromise
+- [ ] Add tests for type-based catching chains
+
+**Example**:
+
+```typescript
+class LessDBPromise<T> extends Promise<T> {
+  catch<E extends Error, TResult = never>(
+    ErrorType: new (...args: any[]) => E,
+    onrejected: (error: E) => TResult | PromiseLike<TResult>,
+  ): LessDBPromise<T | TResult>;
+
+  catch<TResult = never>(
+    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null,
+  ): LessDBPromise<T | TResult>;
+}
+```
+
+##### 4.2.3 Error Mapping
+
+**Goal**: Map IndexedDB DOMException to semantic LessDB error types.
+
+**Dexie reference**: `src/errors/index.ts` - `mapError()` function
+
+**Implementation tasks**:
+
+- [ ] Create `mapDOMException(error: DOMException): LessDBError` function
+- [ ] Map all known DOMException.name values to error types
+- [ ] Preserve original error in `.inner` property
+- [ ] Apply mapping at DBCore boundary (indexeddb-adapter)
+- [ ] Add tests for error mapping
+
+**Mapping table**:
+
+```typescript
+const errorMapping = {
+  ConstraintError: ConstraintError,
+  DataError: DataError,
+  InvalidStateError: InvalidStateError,
+  NotFoundError: NotFoundError,
+  QuotaExceededError: QuotaExceededError,
+  ReadOnlyError: ReadOnlyError,
+  TransactionInactiveError: TransactionInactiveError,
+  VersionError: VersionError,
+  AbortError: AbortError,
+  // ... etc
+};
+```
+
+---
+
+#### 4.3 Middleware Enhancements (Medium Priority)
+
+##### 4.3.1 Hooks as Middleware
+
+**Goal**: Implement table hooks via DBCore middleware for consistency.
+
+**Dexie reference**: `src/hooks/hooks-middleware.ts`
+
+**Benefits**:
+
+- Single interception point for all operations
+- Hooks can cancel/modify operations
+- Consistent with other middleware
+
+**Implementation tasks**:
+
+- [ ] Create `createHooksMiddleware()` function
+- [ ] Move hook firing from Table methods to middleware
+- [ ] Support hook return values for cancellation
+- [ ] Ensure hooks fire in correct order (creating before add, etc.)
+- [ ] Maintain backward compatibility with existing hook API
+- [ ] Add tests for hooks via middleware
+
+##### 4.3.2 Cache Middleware
+
+**Goal**: Provide optional per-table caching middleware.
+
+**Implementation tasks**:
+
+- [ ] Create `cacheMiddleware(options)` factory
+- [ ] Implement per-table LRU cache
+- [ ] Cache `get()` results by key
+- [ ] Invalidate cache on `mutate()` operations
+- [ ] Support cache size limits
+- [ ] Support TTL (time-to-live) option
+- [ ] Add `clearCache()` method
+- [ ] Add tests for cache behavior
+
+##### 4.3.3 Observability Middleware
+
+**Goal**: Standard middleware for logging/debugging/tracing.
+
+**Implementation tasks**:
+
+- [ ] Create `loggingMiddleware(options)` factory
+- [ ] Log all DBCore operations with timing
+- [ ] Support log levels (error, warn, info, debug)
+- [ ] Support custom log handlers
+- [ ] Include transaction ID in logs
+- [ ] Add operation duration metrics
+
+---
+
+#### 4.4 Advanced Transaction Patterns (Medium Priority)
+
+##### 4.4.1 Recursive Locking
+
+**Goal**: Allow nested operations on same tables within transaction.
+
+**Dexie reference**: `src/classes/Dexie/dexie-open.ts` - recursive transaction handling
+
+**Implementation tasks**:
+
+- [ ] Track transaction "owners" (call stacks)
+- [ ] Allow re-entry for same owner
+- [ ] Prevent deadlocks with timeout
+- [ ] Add tests for recursive scenarios
+
+##### 4.4.2 Transaction Abort Handling
+
+**Goal**: Graceful handling when transactions abort.
+
+**Implementation tasks**:
+
+- [ ] Detect transaction abort via IDBTransaction.onerror
+- [ ] Convert to AbortError with meaningful message
+- [ ] Clean up any pending operations
+- [ ] Support `transaction.on('abort')` event
+
+---
+
+#### 4.5 Live Query Foundation (Lower Priority)
+
+##### 4.5.1 Query Tracking
+
+**Goal**: Track which tables/ranges a query reads for change detection.
+
+**Implementation tasks**:
+
+- [ ] Create `QueryTracker` class
+- [ ] Instrument Collection to record table/index/range access
+- [ ] Store query "fingerprint" for comparison
+- [ ] Support complex queries (OR, filters)
+
+##### 4.5.2 Change Detection
+
+**Goal**: Emit change events that can trigger query re-runs.
+
+**Implementation tasks**:
+
+- [ ] Create `changes` middleware that emits on every mutation
+- [ ] Include table, key, old value, new value in change event
+- [ ] Support batched change events (one event per transaction)
+- [ ] Match change events to query fingerprints
+
+##### 4.5.3 Observable Wrapper
+
+**Goal**: Create `liveQuery()` function matching Dexie's API.
+
+**Implementation tasks**:
+
+- [ ] Create `liveQuery(queryFn)` function
+- [ ] Return RxJS-compatible Observable
+- [ ] Subscribe to change events
+- [ ] Re-run query when relevant changes detected
+- [ ] Debounce rapid changes
+- [ ] Clean up on unsubscribe
+
+---
+
+### Phase 5: Polish
 
 - [ ] **Documentation** - API docs, usage examples, migration guide from Dexie
 - [ ] **Performance optimization** - Profile and optimize hot paths
-- [ ] **Auto-open** - Currently requires explicit `db.open()`, could auto-open on first operation
 - [ ] **Table proxy access** - `db.friends` shorthand (partially working, needs testing)
 
-### Future Extensions (Designed For, Not Planned for v1)
+### Future Extensions (Not Planned for v1)
 
-- [ ] **Live queries / reactivity** - `liveQuery(() => db.friends.toArray())`
 - [ ] **Encryption middleware** - Encrypt specific fields or entire tables
 - [ ] **Sync middleware** - Track local changes, apply remote changes
 - [ ] **Compound indexes** - `'++id, [firstName+lastName]'`
@@ -133,9 +430,9 @@ src/
 | compat                | 37      | ✅     |
 | events                | 33      | ✅     |
 | schema-parser         | 35      | ✅     |
-| dbcore                | 36      | ✅     |
+| dbcore                | 204     | ✅     |
 | less-db (integration) | 90      | ✅     |
-| **Total**             | **255** | ✅     |
+| **Total**             | **423** | ✅     |
 
 ---
 
