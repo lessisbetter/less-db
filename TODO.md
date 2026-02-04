@@ -162,6 +162,7 @@ await db.users.add({ name: "Alice" }); // Auto-creates readwrite transaction
 **Goal**: Match Dexie's complete error hierarchy.
 
 **All error types implemented** (19 types):
+
 - [x] `LessDBError` - Base error class
 - [x] `AbortError` - Transaction was aborted
 - [x] `BlockedError` - Database blocked by another connection
@@ -198,9 +199,10 @@ await db.users.add({ name: "Alice" }); // Auto-creates readwrite transaction
 **Usage**:
 
 ```typescript
-db.users.add(user)
-  .catch(ConstraintError, err => console.log("Duplicate!"))
-  .catch(err => console.log("Other error"));
+db.users
+  .add(user)
+  .catch(ConstraintError, (err) => console.log("Duplicate!"))
+  .catch((err) => console.log("Other error"));
 ```
 
 ##### 4.2.3 Error Mapping ✅ DONE
@@ -208,6 +210,7 @@ db.users.add(user)
 **Goal**: Map IndexedDB DOMException to semantic LessDB error types.
 
 **Implementation**:
+
 - [x] `mapError()` function in `src/errors/errors.ts`
 - [x] Maps all known DOMException.name values to error types
 - [x] Preserves original error in `.inner` property
@@ -381,21 +384,23 @@ src/
 
 ## Test Coverage
 
-| Module                | Tests   | Status |
-| --------------------- | ------- | ------ |
-| errors                | 93      | ✅     |
-| compat                | 50      | ✅     |
-| events                | 36      | ✅     |
-| schema-parser         | 49      | ✅     |
-| dbcore                | 45      | ✅     |
-| middleware (cache)    | 27      | ✅     |
-| middleware            | 10      | ✅     |
-| hooks                 | 20      | ✅     |
-| compound-index        | 12      | ✅     |
-| ignore-case           | 22      | ✅     |
-| integration           | 60      | ✅     |
-| less-db               | 268     | ✅     |
-| **Total**             | **692** | ✅     |
+| Module              | Tests   | Status |
+| ------------------- | ------- | ------ |
+| errors              | 93      | ✅     |
+| compat              | 50      | ✅     |
+| events              | 36      | ✅     |
+| schema-parser       | 49      | ✅     |
+| promise             | 28      | ✅     |
+| dbcore              | 45      | ✅     |
+| middleware (cache)  | 27      | ✅     |
+| middleware (logging)| 18      | ✅     |
+| middleware          | 10      | ✅     |
+| hooks               | 22      | ✅     |
+| compound-index      | 12      | ✅     |
+| ignore-case         | 22      | ✅     |
+| integration         | 66      | ✅     |
+| less-db             | 268     | ✅     |
+| **Total**           | **746** | ✅     |
 
 ---
 
