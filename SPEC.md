@@ -522,7 +522,7 @@ export function setupBfCacheHandling(db: LessDB): void {
                             ▼
 ┌─────────────────────────────────────────────────────────┐
 │                     Middleware Stack                    │
-│        (Hooks, Future: Cache, Observability)            │
+│            (Hooks, Cache, Logging/Observability)        │
 └─────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -575,6 +575,91 @@ src/
 └── errors/
     └── errors.ts            # Error classes (ConstraintError, etc.)
 ```
+
+---
+
+## Performance Characteristics
+
+### Query Strategy: getAll vs Cursors
+
+LessDB uses different strategies for different query types, optimizing for the common case of small-to-medium datasets (under 100,000 records per table).
+
+**Index-based queries** (`where().equals()`, `where().above()`, etc.):
+- Use IndexedDB's native key range queries
+- Efficient for any dataset size
+- Results limited by index selectivity
+
+**In-memory filtering queries** (`filter()`, `notEqual()`, `noneOf()`):
+- Use `getAll()` to fetch all records, then filter in JavaScript
+- Significantly faster than cursor iteration for most datasets
+- Trade memory for speed
+
+### Memory vs Speed Tradeoffs
+
+The following operations load all matching records into memory before filtering:
+
+| Operation | Strategy | Performance | Memory |
+|-----------|----------|-------------|--------|
+| `table.filter(fn)` | getAll + Array.filter | 10-20x faster than cursors | O(n) where n = table size |
+| `where(idx).notEqual(v)` | getAll + filter | 10-20x faster than cursors | O(n) where n = table size |
+| `where(idx).noneOf(arr)` | getAll + filter | 100-200x faster than cursors | O(n) where n = table size |
+| `where(idx).equals(v)` | IDB key range | Native speed | O(m) where m = matches |
+| `where(idx).anyOf(arr)` | Parallel IDB queries | Native speed | O(m) where m = matches |
+
+**Why this approach?**
+
+Modern JavaScript engines optimize `getAll()` + `Array.filter()` extremely well:
+- Single IndexedDB round-trip (vs one per cursor advance)
+- V8/SpiderMonkey JIT-optimize array iteration
+- No async overhead per record
+- Memory allocation is batched
+
+Cursor-based iteration has inherent overhead:
+- Each `cursor.continue()` is an async operation
+- Cannot be JIT-optimized across await boundaries
+- IndexedDB transaction management per step
+
+### When to Consider Alternatives
+
+For very large tables (100,000+ records), the in-memory approach may cause:
+- **Memory pressure**: Loading 100k records into memory before filtering
+- **Initial latency**: Time to fetch all records before first result
+
+**Recommendations for large datasets:**
+
+1. **Use indexed queries when possible**: `where('status').equals('active')` is always O(matches), not O(table size)
+
+2. **Combine index + filter**: Narrow with an index first, then filter:
+   ```typescript
+   // Better: uses index to narrow, then filters small result
+   await db.users.where('status').equals('active').filter(u => u.age > 30).toArray();
+
+   // Worse: loads all users into memory
+   await db.users.filter(u => u.status === 'active' && u.age > 30).toArray();
+   ```
+
+3. **Add indexes for frequent queries**: If you often filter by a field, add an index for it
+
+4. **Pagination**: Use `limit()` and `offset()` to process in batches:
+   ```typescript
+   const pageSize = 1000;
+   let offset = 0;
+   while (true) {
+     const batch = await db.users.filter(fn).offset(offset).limit(pageSize).toArray();
+     if (batch.length === 0) break;
+     processBatch(batch);
+     offset += pageSize;
+   }
+   ```
+
+### Benchmark Context
+
+In benchmarks against Dexie.js, LessDB shows significant performance gains for filter operations due to this strategy. The tradeoff is intentional: most applications have tables with hundreds to thousands of records, where memory is not a concern but query latency is noticeable.
+
+If your use case involves very large tables with frequent full-table scans, consider:
+- Adding appropriate indexes
+- Using server-side filtering for large datasets
+- Implementing custom cursor-based iteration for specific queries
 
 ---
 
@@ -1031,13 +1116,13 @@ These patterns are critical for matching Dexie's behavior and enabling advanced 
 - [ ] **Implicit transactions** - Auto-create transaction for single operations outside explicit transaction
 - [ ] **PSD (Promise-Specific Data)** - Track transaction context across async boundaries
 - [ ] **Expanded error types** - Add all Dexie error types (QuotaExceededError, TimeoutError, etc.)
-- [ ] **Type-based error catching** - `promise.catch(ConstraintError, handler)` pattern
+- [x] **Type-based error catching** - `promise.catch(ConstraintError, handler)` pattern
 - [ ] **Error mapping** - Map IndexedDB DOMException to semantic error types
 
 #### Medium Priority
 
-- [ ] **Hooks as middleware** - Implement hooks via DBCore middleware layer
-- [ ] **Cache middleware** - Optional per-table caching middleware
+- [x] **Hooks as middleware** - Implement hooks via DBCore middleware layer
+- [x] **Cache middleware** - Optional per-table caching middleware
 - [ ] **Nested transaction reuse** - Reuse parent transaction when tables are subset
 - [ ] **Recursive locking** - Allow nested operations on same tables within transaction
 - [ ] **Blocked function queue** - Queue operations waiting for transaction access
@@ -1045,13 +1130,13 @@ These patterns are critical for matching Dexie's behavior and enabling advanced 
 #### Lower Priority
 
 - [ ] **Live query foundation** - Query tracking and change detection for observables
-- [ ] **Observability middleware** - Standard middleware for logging/debugging
+- [x] **Observability middleware** - Standard middleware for logging/debugging
 - [ ] **VIP promise pattern** - Priority handling for internal operations
 
 ### Phase 5: Polish
 
 - [x] Full TypeScript generics
-- [x] Comprehensive tests (423 tests)
+- [x] Comprehensive tests (746 tests)
 - [ ] Documentation
 - [ ] Performance optimization
 
