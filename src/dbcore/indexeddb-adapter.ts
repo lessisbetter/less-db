@@ -147,9 +147,17 @@ class IDBCoreTable implements DBCoreTable {
 
     // Handle "not equal" with cursor and filter
     if (request.range.type === DBCoreRangeType.NotEqual) {
-      await this.cursorQuery(source, undefined, direction, request, values, keys, (_value, key) => {
-        return compareKeys(key, request.range.lower) !== 0;
-      });
+      await this.cursorQuery(
+        source,
+        undefined,
+        direction,
+        request,
+        values,
+        keys,
+        (_value, _primaryKey, indexKey) => {
+          return compareKeys(indexKey, request.range.lower) !== 0;
+        },
+      );
       return { values, keys };
     }
 
@@ -178,7 +186,7 @@ class IDBCoreTable implements DBCoreTable {
     request: DBCoreQueryRequest,
     values: unknown[],
     keys: unknown[],
-    filter?: (value: unknown, key: unknown) => boolean,
+    filter?: (value: unknown, primaryKey: unknown, indexKey: unknown) => boolean,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const cursorRequest = source.openCursor(range, direction);
@@ -203,8 +211,8 @@ class IDBCoreTable implements DBCoreTable {
         }
         lastKey = cursor.key;
 
-        // Apply custom filter
-        if (filter && !filter(cursor.value, cursor.primaryKey)) {
+        // Apply custom filter (pass both primary key and index key)
+        if (filter && !filter(cursor.value, cursor.primaryKey, cursor.key)) {
           cursor.continue();
           return;
         }

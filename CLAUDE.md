@@ -16,6 +16,7 @@ pnpm test:run       # Run tests once
 pnpm test:run src/path/to/file.test.ts  # Run a single test file
 pnpm test:coverage  # Run tests with coverage
 pnpm typecheck      # Type check without emitting
+pnpm check          # Run format + typecheck + tests (CI validation)
 ```
 
 ## Architecture
@@ -44,6 +45,8 @@ User API (LessDB, Table, Collection, WhereClause)
 
 **WhereClause** (`src/where-clause.ts`) - Index-based query builder with methods like `equals`, `above`, `below`, `between`, `anyOf`, `startsWith`. Returns Collection instances for further chaining.
 
+**Transaction** (`src/transaction.ts`) - Transaction coordination with `TransactionContext` providing scoped table access. Supports both explicit transactions via `db.transaction()` and implicit per-operation transactions.
+
 ### Schema Definition
 
 Schemas use Dexie-style string syntax parsed by `src/schema-parser.ts`:
@@ -65,6 +68,14 @@ Example: `'++id, name, &email'` defines auto-increment id, indexed name, unique 
 ### Middleware System
 
 Middleware wraps DBCore to intercept operations. Register with `db.use({ name, level?, create(core) })`. Lower level = closer to IndexedDB.
+
+### Key Patterns
+
+**Lazy Collections**: Collections don't execute until a terminal operation (`toArray`, `first`, `count`, etc.) is called. This enables query building via chaining.
+
+**OR Queries**: `collection.or('indexName')` returns an `OrClause` that merges results from multiple index queries, deduplicating by primary key.
+
+**Key Ranges**: The `DBCoreKeyRange` type (`src/dbcore/types.ts`) represents query bounds with types: `Equal`, `Range`, `Any`, `NotEqual`. Helper functions like `keyRangeEqual()`, `keyRangeRange()` create these.
 
 ## Testing
 

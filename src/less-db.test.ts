@@ -1318,4 +1318,1298 @@ describe("LessDB", () => {
       expect(() => db._requery()).not.toThrow();
     });
   });
+
+  describe("Collection.or() clause operations", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+        { name: "Dave", email: "d@test.com", age: 40 },
+        { name: "Eve", email: "e@test.com", age: 45 },
+      ]);
+    });
+
+    describe("or().notEqual", () => {
+      it("combines base query with notEqual OR clause", async () => {
+        const users = db.table<User, number>("users");
+        // age < 30 OR name != "Dave"
+        const results = await users.where("age").below(30).or("name").notEqual("Dave").toArray();
+
+        // Alice (25) from first clause, plus Bob, Charlie, Eve from notEqual Dave (deduplicated)
+        expect(results).toHaveLength(4);
+        expect(results.map((u) => u.name).sort()).toEqual(["Alice", "Bob", "Charlie", "Eve"]);
+      });
+    });
+
+    describe("or().anyOf", () => {
+      it("combines base query with anyOf OR clause", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(25).or("age").anyOf([35, 45]).toArray();
+
+        expect(results).toHaveLength(3); // Alice (25), Charlie (35), Eve (45)
+        expect(results.map((u) => u.name).sort()).toEqual(["Alice", "Charlie", "Eve"]);
+      });
+
+      it("returns base collection when anyOf has empty array", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(25).or("age").anyOf([]).toArray();
+
+        expect(results).toHaveLength(1); // Only Alice from base query
+      });
+    });
+
+    describe("or().noneOf", () => {
+      it("combines base query with noneOf OR clause", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(25)
+          .or("age")
+          .noneOf([25, 30, 35])
+          .toArray();
+
+        // Alice (25) from base, plus Dave (40), Eve (45) from noneOf
+        expect(results).toHaveLength(3);
+        expect(results.map((u) => u.name).sort()).toEqual(["Alice", "Dave", "Eve"]);
+      });
+    });
+
+    describe("or().above and or().aboveOrEqual", () => {
+      it("combines with above", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(25).or("age").above(40).toArray();
+
+        expect(results).toHaveLength(2); // Alice (25), Eve (45)
+        expect(results.map((u) => u.name).sort()).toEqual(["Alice", "Eve"]);
+      });
+
+      it("combines with aboveOrEqual", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(25).or("age").aboveOrEqual(45).toArray();
+
+        expect(results).toHaveLength(2); // Alice (25), Eve (45)
+      });
+    });
+
+    describe("or().below and or().belowOrEqual", () => {
+      it("combines with below", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(45).or("age").below(30).toArray();
+
+        expect(results).toHaveLength(2); // Alice (25), Eve (45)
+      });
+
+      it("combines with belowOrEqual", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(45).or("age").belowOrEqual(25).toArray();
+
+        expect(results).toHaveLength(2); // Alice (25), Eve (45)
+      });
+    });
+
+    describe("or().between", () => {
+      it("combines with between (default bounds)", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(45).or("age").between(25, 35).toArray();
+
+        // Eve (45), plus Alice (25), Bob (30) - default excludes upper bound
+        expect(results).toHaveLength(3);
+      });
+
+      it("combines with between (custom bounds)", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("age")
+          .between(25, 35, true, true)
+          .toArray();
+
+        // Eve (45), plus Alice (25), Bob (30), Charlie (35)
+        expect(results).toHaveLength(4);
+      });
+    });
+
+    describe("or().startsWith", () => {
+      it("combines with startsWith", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(45).or("name").startsWith("A").toArray();
+
+        expect(results).toHaveLength(2); // Eve (45), Alice (starts with A)
+        expect(results.map((u) => u.name).sort()).toEqual(["Alice", "Eve"]);
+      });
+
+      it("handles empty prefix in OR clause", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(45).or("name").startsWith("").toArray();
+
+        // Eve (45) plus all others (empty prefix matches all)
+        expect(results).toHaveLength(5);
+      });
+    });
+
+    describe("or().startsWithIgnoreCase", () => {
+      it("combines with startsWithIgnoreCase", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("name")
+          .startsWithIgnoreCase("a")
+          .toArray();
+
+        expect(results).toHaveLength(2); // Eve, Alice
+      });
+    });
+
+    describe("or().equalsIgnoreCase", () => {
+      it("combines with equalsIgnoreCase", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("name")
+          .equalsIgnoreCase("ALICE")
+          .toArray();
+
+        expect(results).toHaveLength(2); // Eve, Alice
+      });
+    });
+
+    describe("or().anyOfIgnoreCase", () => {
+      it("combines with anyOfIgnoreCase", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("name")
+          .anyOfIgnoreCase(["ALICE", "BOB"])
+          .toArray();
+
+        expect(results).toHaveLength(3); // Eve, Alice, Bob
+      });
+
+      it("returns base collection when anyOfIgnoreCase has empty array", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(25)
+          .or("name")
+          .anyOfIgnoreCase([])
+          .toArray();
+
+        expect(results).toHaveLength(1); // Only Alice
+      });
+    });
+
+    describe("or().startsWithAnyOf", () => {
+      it("combines with single prefix", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("name")
+          .startsWithAnyOf(["A"])
+          .toArray();
+
+        expect(results).toHaveLength(2); // Eve, Alice
+      });
+
+      it("combines with multiple prefixes", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("name")
+          .startsWithAnyOf(["A", "B"])
+          .toArray();
+
+        expect(results).toHaveLength(3); // Eve, Alice, Bob
+      });
+
+      it("returns base collection when startsWithAnyOf has empty array", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(25)
+          .or("name")
+          .startsWithAnyOf([])
+          .toArray();
+
+        expect(results).toHaveLength(1); // Only Alice
+      });
+    });
+
+    describe("or().startsWithAnyOfIgnoreCase", () => {
+      it("combines with case-insensitive prefixes", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("name")
+          .startsWithAnyOfIgnoreCase(["a", "b"])
+          .toArray();
+
+        expect(results).toHaveLength(3); // Eve, Alice, Bob
+      });
+
+      it("returns base collection when empty array", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(25)
+          .or("name")
+          .startsWithAnyOfIgnoreCase([])
+          .toArray();
+
+        expect(results).toHaveLength(1);
+      });
+    });
+
+    describe("or().inAnyRange", () => {
+      it("combines with single range", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(45)
+          .or("age")
+          .inAnyRange([[25, 30]])
+          .toArray();
+
+        // Eve (45), Alice (25)
+        expect(results).toHaveLength(2);
+      });
+
+      it("combines with multiple ranges", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("name")
+          .equals("Eve")
+          .or("age")
+          .inAnyRange([
+            [20, 26],
+            [34, 36],
+          ])
+          .toArray();
+
+        // Eve, Alice (25), Charlie (35)
+        expect(results).toHaveLength(3);
+      });
+
+      it("respects includeUppers option", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("name")
+          .equals("Eve")
+          .or("age")
+          .inAnyRange([[25, 30]], { includeLowers: true, includeUppers: true })
+          .toArray();
+
+        // Eve, Alice (25), Bob (30)
+        expect(results).toHaveLength(3);
+      });
+
+      it("returns base collection when empty ranges array", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").equals(25).or("age").inAnyRange([]).toArray();
+
+        expect(results).toHaveLength(1); // Only Alice
+      });
+    });
+
+    describe("chained OR operations", () => {
+      it("supports multiple OR clauses", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(25)
+          .or("age")
+          .equals(35)
+          .or("age")
+          .equals(45)
+          .toArray();
+
+        expect(results).toHaveLength(3); // Alice, Charlie, Eve
+      });
+
+      it("OR query works when first clause matches nothing", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .equals(999) // No match
+          .or("age")
+          .equals(25)
+          .toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0].name).toBe("Alice");
+      });
+    });
+  });
+
+  describe("Collection.sortBy edge cases", () => {
+    interface NestedUser {
+      id?: number;
+      name: string;
+      profile: {
+        location: {
+          city: string;
+        };
+        score: number;
+      };
+    }
+
+    beforeEach(async () => {
+      db.version(1).stores({
+        nestedUsers: "++id",
+      });
+      await db.open();
+
+      const users = db.table<NestedUser, number>("nestedUsers");
+      await users.bulkAdd([
+        { name: "Alice", profile: { location: { city: "NYC" }, score: 100 } },
+        { name: "Bob", profile: { location: { city: "LA" }, score: 50 } },
+        { name: "Charlie", profile: { location: { city: "Boston" }, score: 75 } },
+      ]);
+    });
+
+    it("sorts by nested path", async () => {
+      const users = db.table<NestedUser, number>("nestedUsers");
+      const sorted = await users.toCollection().sortBy("profile.score");
+
+      expect(sorted[0].name).toBe("Bob"); // 50
+      expect(sorted[1].name).toBe("Charlie"); // 75
+      expect(sorted[2].name).toBe("Alice"); // 100
+    });
+
+    it("sorts by deeply nested path", async () => {
+      const users = db.table<NestedUser, number>("nestedUsers");
+      const sorted = await users.toCollection().sortBy("profile.location.city");
+
+      expect(sorted[0].profile.location.city).toBe("Boston");
+      expect(sorted[1].profile.location.city).toBe("LA");
+      expect(sorted[2].profile.location.city).toBe("NYC");
+    });
+
+    it("handles missing nested properties", async () => {
+      const users = db.table<NestedUser, number>("nestedUsers");
+      await users.add({ name: "Dave", profile: { location: { city: "Miami" }, score: 0 } });
+
+      // Should not throw on non-existent path
+      const sorted = await users.toCollection().sortBy("profile.nonexistent.path");
+      expect(sorted).toHaveLength(4);
+    });
+  });
+
+  describe("Collection.modify edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+        { name: "Dave", email: "d@test.com", age: 40 },
+        { name: "Eve", email: "e@test.com", age: 45 },
+      ]);
+    });
+
+    it("modifies with filter and limit", async () => {
+      const users = db.table<User, number>("users");
+      const count = await users
+        .toCollection()
+        .filter((u) => u.age >= 30)
+        .limit(2)
+        .modify({ age: 99 });
+
+      expect(count).toBe(2);
+
+      const modified = await users.where("age").equals(99).toArray();
+      expect(modified).toHaveLength(2);
+    });
+
+    it("modifies with filter and offset", async () => {
+      const users = db.table<User, number>("users");
+      const count = await users
+        .toCollection()
+        .filter((u) => u.age >= 30)
+        .offset(1)
+        .modify({ age: 99 });
+
+      // 4 users with age >= 30, skip first one, modify remaining 3
+      expect(count).toBe(3);
+    });
+
+    it("modifies with filter, offset, and limit combined", async () => {
+      const users = db.table<User, number>("users");
+      const count = await users
+        .toCollection()
+        .filter((u) => u.age >= 25)
+        .offset(1)
+        .limit(2)
+        .modify({ age: 99 });
+
+      expect(count).toBe(2);
+    });
+
+    it("modifies with function that returns partial object", async () => {
+      const users = db.table<User, number>("users");
+      const count = await users
+        .where("age")
+        .equals(25)
+        .modify((u) => ({ age: u.age + 10 }));
+
+      expect(count).toBe(1);
+
+      const alice = await users.where("name").equals("Alice").first();
+      expect(alice?.age).toBe(35);
+    });
+
+    it("modify function mutates in place", async () => {
+      const users = db.table<User, number>("users");
+      await users
+        .where("age")
+        .equals(25)
+        .modify((u) => {
+          u.age = 100;
+        });
+
+      const alice = await users.where("name").equals("Alice").first();
+      expect(alice?.age).toBe(100);
+    });
+
+    it("modify returns 0 when no items match", async () => {
+      const users = db.table<User, number>("users");
+      const count = await users.where("age").equals(999).modify({ age: 1 });
+
+      expect(count).toBe(0);
+    });
+  });
+
+  describe("Collection.delete edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+        { name: "Dave", email: "d@test.com", age: 40 },
+        { name: "Eve", email: "e@test.com", age: 45 },
+      ]);
+    });
+
+    it("deletes with filter", async () => {
+      const users = db.table<User, number>("users");
+      const deleted = await users
+        .toCollection()
+        .filter((u) => u.age > 35)
+        .delete();
+
+      expect(deleted).toBe(2); // Dave, Eve
+      expect(await users.count()).toBe(3);
+    });
+
+    it("deletes with filter and limit", async () => {
+      const users = db.table<User, number>("users");
+      const deleted = await users
+        .toCollection()
+        .filter((u) => u.age >= 30)
+        .limit(2)
+        .delete();
+
+      expect(deleted).toBe(2);
+      expect(await users.count()).toBe(3);
+    });
+
+    it("deletes with filter and offset", async () => {
+      const users = db.table<User, number>("users");
+      const deleted = await users
+        .toCollection()
+        .filter((u) => u.age >= 30)
+        .offset(1)
+        .delete();
+
+      expect(deleted).toBe(3); // Skip first of 4 matching, delete remaining 3
+      expect(await users.count()).toBe(2);
+    });
+
+    it("deletes using index query with filter", async () => {
+      const users = db.table<User, number>("users");
+      const deleted = await users
+        .where("age")
+        .above(25)
+        .filter((u) => u.name.startsWith("C") || u.name.startsWith("D"))
+        .delete();
+
+      expect(deleted).toBe(2); // Charlie, Dave
+    });
+
+    it("deletes with index and limit", async () => {
+      const users = db.table<User, number>("users");
+      const deleted = await users.where("age").above(25).limit(2).delete();
+
+      expect(deleted).toBe(2);
+    });
+
+    it("delete returns 0 when no items match", async () => {
+      const users = db.table<User, number>("users");
+      const deleted = await users.where("age").equals(999).delete();
+
+      expect(deleted).toBe(0);
+    });
+
+    it("delete works with range query (no filter)", async () => {
+      const users = db.table<User, number>("users");
+      // When deleting on primary key range without filter, uses deleteRange
+      const deleted = await users.toCollection().delete();
+
+      expect(deleted).toBe(5);
+      expect(await users.count()).toBe(0);
+    });
+  });
+
+  describe("WhereClause edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+      ]);
+    });
+
+    describe("notEqual", () => {
+      it("returns items not equal to value", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").notEqual(30).toArray();
+
+        expect(results).toHaveLength(2);
+        expect(results.map((u) => u.name).sort()).toEqual(["Alice", "Charlie"]);
+      });
+
+      it("notEqual uses index key not primary key", async () => {
+        const users = db.table<User, number>("users");
+        // If notEqual incorrectly used primary key, this would fail
+        // Alice has id=1 and age=25, Bob has id=2 and age=30, Charlie has id=3 and age=35
+        // Querying notEqual(1) on age should return ALL since no one has age=1
+        const results = await users.where("age").notEqual(1).toArray();
+        expect(results).toHaveLength(3);
+      });
+    });
+
+    describe("noneOf", () => {
+      it("returns items not in the set", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").noneOf([25, 35]).toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0].name).toBe("Bob");
+      });
+
+      it("returns all items when noneOf has empty array", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("age").noneOf([]).toArray();
+
+        expect(results).toHaveLength(3);
+      });
+    });
+
+    describe("equalsIgnoreCase", () => {
+      it("finds exact match case-insensitively", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("name").equalsIgnoreCase("ALICE").toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0].name).toBe("Alice");
+      });
+
+      it("returns empty when no case-insensitive match", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("name").equalsIgnoreCase("NOBODY").toArray();
+
+        expect(results).toHaveLength(0);
+      });
+    });
+
+    describe("startsWithAnyOf edge cases", () => {
+      it("handles single prefix correctly", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users.where("name").startsWithAnyOf(["B"]).toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0].name).toBe("Bob");
+      });
+    });
+
+    describe("inAnyRange with options", () => {
+      it("respects excludeLowers option", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .inAnyRange([[25, 35]], { includeLowers: false })
+          .toArray();
+
+        // Excludes 25, includes 30, excludes 35 (default)
+        expect(results).toHaveLength(1);
+        expect(results[0].name).toBe("Bob");
+      });
+
+      it("respects includeUppers option", async () => {
+        const users = db.table<User, number>("users");
+        const results = await users
+          .where("age")
+          .inAnyRange([[25, 35]], { includeUppers: true })
+          .toArray();
+
+        // Includes 25, 30, 35
+        expect(results).toHaveLength(3);
+      });
+    });
+  });
+
+  describe("Complex query combinations", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+        { name: "Dave", email: "d@test.com", age: 40 },
+        { name: "Eve", email: "e@test.com", age: 45 },
+        { name: "Frank", email: "f@test.com", age: 50 },
+      ]);
+    });
+
+    it("filter + limit + offset", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users
+        .toCollection()
+        .filter((u) => u.age >= 30)
+        .offset(1)
+        .limit(2)
+        .toArray();
+
+      expect(results).toHaveLength(2);
+    });
+
+    it("filter + reverse + limit", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users
+        .orderBy("age")
+        .filter((u) => u.age >= 30)
+        .reverse()
+        .limit(2)
+        .toArray();
+
+      // Reverse means highest ages first
+      expect(results[0].name).toBe("Frank"); // 50
+      expect(results[1].name).toBe("Eve"); // 45
+    });
+
+    it("filter + until combination", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users
+        .orderBy("age")
+        .filter((u) => u.age >= 30)
+        .until((u) => u.age >= 45)
+        .toArray();
+
+      // Starts at 30 (Bob), stops before 45
+      expect(results.map((u) => u.name)).toEqual(["Bob", "Charlie", "Dave"]);
+    });
+
+    it("filter + until + includeStopItem", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users
+        .orderBy("age")
+        .filter((u) => u.age >= 30)
+        .until((u) => u.age >= 45, true)
+        .toArray();
+
+      // Includes Eve (45) as stop item
+      expect(results.map((u) => u.name)).toEqual(["Bob", "Charlie", "Dave", "Eve"]);
+    });
+
+    it("reverse + offset + limit", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.toCollection().reverse().offset(1).limit(2).toArray();
+
+      expect(results).toHaveLength(2);
+    });
+
+    it("index query + filter + limit", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users
+        .where("age")
+        .above(25)
+        .filter((u) => u.name.length <= 4) // Bob, Dave, Eve
+        .limit(2)
+        .toArray();
+
+      expect(results).toHaveLength(2);
+    });
+
+    it("chained filter predicates", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users
+        .toCollection()
+        .filter((u) => u.age >= 30)
+        .and((u) => u.age <= 45)
+        .and((u) => u.name.length <= 4)
+        .toArray();
+
+      // Bob (30, 3 chars), Dave (40, 4 chars), Eve (45, 3 chars)
+      expect(results).toHaveLength(3);
+    });
+  });
+
+  describe("OR queries with primaryKeys() and limit", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+        { name: "Dave", email: "d@test.com", age: 40 },
+        { name: "Eve", email: "e@test.com", age: 45 },
+      ]);
+    });
+
+    it("primaryKeys with OR query", async () => {
+      const users = db.table<User, number>("users");
+      const keys = await users.where("age").equals(25).or("age").equals(45).primaryKeys();
+
+      expect(keys).toHaveLength(2);
+    });
+
+    it("primaryKeys with OR query deduplicates", async () => {
+      const users = db.table<User, number>("users");
+      const keys = await users.where("age").equals(25).or("name").equals("Alice").primaryKeys();
+
+      // Alice matches both clauses, should appear once
+      expect(keys).toHaveLength(1);
+    });
+
+    it("OR query respects limit after merge", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.where("age").below(35).or("age").above(40).limit(3).toArray();
+
+      // Could match Alice (25), Bob (30), Eve (45) - limited to 3
+      expect(results.length).toBeLessThanOrEqual(3);
+    });
+
+    it("primaryKeys with OR respects limit after merge", async () => {
+      const users = db.table<User, number>("users");
+      const keys = await users.where("age").below(40).or("age").above(30).limit(3).primaryKeys();
+
+      expect(keys.length).toBeLessThanOrEqual(3);
+    });
+
+    it("count with OR query", async () => {
+      const users = db.table<User, number>("users");
+      const count = await users.where("age").equals(25).or("age").equals(45).count();
+
+      expect(count).toBe(2);
+    });
+  });
+
+  describe("Negative cases and error handling", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, &email, name",
+      });
+      await db.open();
+    });
+
+    describe("Constraint violations", () => {
+      it("add throws ConstraintError on duplicate unique index", async () => {
+        const users = db.table<User, number>("users");
+        await users.add({ name: "Alice", email: "alice@test.com", age: 30 });
+
+        await expect(users.add({ name: "Bob", email: "alice@test.com", age: 25 })).rejects.toThrow(
+          ConstraintError,
+        );
+      });
+
+      it("bulkAdd throws ConstraintError with details on failure", async () => {
+        const users = db.table<User, number>("users");
+        await users.add({ name: "Alice", email: "alice@test.com", age: 30 });
+
+        await expect(
+          users.bulkAdd([
+            { name: "Bob", email: "bob@test.com", age: 25 },
+            { name: "Charlie", email: "alice@test.com", age: 35 }, // Duplicate
+          ]),
+        ).rejects.toThrow(ConstraintError);
+      });
+
+      it("bulkPut throws ConstraintError on unique constraint violation", async () => {
+        const users = db.table<User, number>("users");
+        const [id1] = await users.bulkAdd([
+          { name: "Alice", email: "alice@test.com", age: 30 },
+          { name: "Bob", email: "bob@test.com", age: 25 },
+        ]);
+
+        // Alice and Bob both exist - try to change Alice's email to Bob's email
+        // This should throw since Bob still has that email (unique constraint)
+        await expect(
+          users.bulkPut([{ id: id1, name: "Alice", email: "bob@test.com", age: 30 }]),
+        ).rejects.toThrow(ConstraintError);
+      });
+    });
+
+    describe("Empty inputs", () => {
+      it("bulkUpdate with empty array returns 0", async () => {
+        const users = db.table<User, number>("users");
+        const count = await users.bulkUpdate([]);
+
+        expect(count).toBe(0);
+      });
+
+      it("startsWithAnyOfIgnoreCase with empty array returns empty", async () => {
+        const users = db.table<User, number>("users");
+        await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+
+        const results = await users.where("name").startsWithAnyOfIgnoreCase([]).toArray();
+        expect(results).toHaveLength(0);
+      });
+
+      it("anyOfIgnoreCase with empty array returns empty", async () => {
+        const users = db.table<User, number>("users");
+        await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+
+        const results = await users.where("name").anyOfIgnoreCase([]).toArray();
+        expect(results).toHaveLength(0);
+      });
+    });
+
+    describe("Non-existent data", () => {
+      it("get returns undefined for non-existent key", async () => {
+        const users = db.table<User, number>("users");
+        const result = await users.get(99999);
+
+        expect(result).toBeUndefined();
+      });
+
+      it("bulkGet returns undefined for non-existent keys", async () => {
+        const users = db.table<User, number>("users");
+        const id = await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+
+        const results = await users.bulkGet([id, 99999, 99998]);
+
+        expect(results[0]?.name).toBe("Alice");
+        expect(results[1]).toBeUndefined();
+        expect(results[2]).toBeUndefined();
+      });
+
+      it("delete on non-existent key does not throw", async () => {
+        const users = db.table<User, number>("users");
+        await expect(users.delete(99999)).resolves.not.toThrow();
+      });
+    });
+  });
+
+  describe("Table hooks integration", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name",
+      });
+      await db.open();
+    });
+
+    describe("creating hook", () => {
+      it("fires on add", async () => {
+        const users = db.table<User & { createdAt?: number }, number>("users");
+        const calls: Array<{ key: number | undefined; item: unknown }> = [];
+
+        users.hook.creating.subscribe((key, obj) => {
+          calls.push({ key, item: { ...obj } });
+        });
+
+        await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].item).toMatchObject({ name: "Alice" });
+      });
+
+      it("fires on bulkAdd", async () => {
+        const users = db.table<User, number>("users");
+        const calls: Array<{ key: number | undefined; item: unknown }> = [];
+
+        users.hook.creating.subscribe((key, obj) => {
+          calls.push({ key, item: { ...obj } });
+        });
+
+        await users.bulkAdd([
+          { name: "Alice", email: "a@test.com", age: 30 },
+          { name: "Bob", email: "b@test.com", age: 25 },
+        ]);
+
+        expect(calls).toHaveLength(2);
+      });
+
+      it("fires on upsert when item does not exist", async () => {
+        const users = db.table<User, number>("users");
+        let createCalled = false;
+
+        users.hook.creating.subscribe(() => {
+          createCalled = true;
+        });
+
+        await users.upsert({ name: "Alice", email: "a@test.com", age: 30 });
+
+        expect(createCalled).toBe(true);
+      });
+    });
+
+    describe("updating hook", () => {
+      it("fires on update", async () => {
+        const users = db.table<User, number>("users");
+        const id = await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+        const calls: Array<{ changes: unknown; key: number; existing: unknown }> = [];
+
+        users.hook.updating.subscribe((changes, key, existing) => {
+          calls.push({ changes, key, existing });
+        });
+
+        await users.update(id, { age: 31 });
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].changes).toEqual({ age: 31 });
+        expect(calls[0].key).toBe(id);
+      });
+
+      it("fires on bulkUpdate", async () => {
+        const users = db.table<User, number>("users");
+        const [id1, id2] = await users.bulkAdd([
+          { name: "Alice", email: "a@test.com", age: 30 },
+          { name: "Bob", email: "b@test.com", age: 25 },
+        ]);
+        const calls: Array<{ changes: unknown; key: number }> = [];
+
+        users.hook.updating.subscribe((changes, key) => {
+          calls.push({ changes, key });
+        });
+
+        await users.bulkUpdate([
+          { key: id1, changes: { age: 31 } },
+          { key: id2, changes: { age: 26 } },
+        ]);
+
+        expect(calls).toHaveLength(2);
+      });
+
+      it("fires on upsert when item exists", async () => {
+        const users = db.table<User, number>("users");
+        const id = await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+        let updateCalled = false;
+
+        users.hook.updating.subscribe(() => {
+          updateCalled = true;
+        });
+
+        await users.upsert({ id, name: "Alice Updated", email: "a@test.com", age: 31 });
+
+        expect(updateCalled).toBe(true);
+      });
+    });
+
+    describe("deleting hook", () => {
+      it("fires on delete", async () => {
+        const users = db.table<User, number>("users");
+        const id = await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+        const calls: Array<{ key: number; existing: unknown }> = [];
+
+        users.hook.deleting.subscribe((key, existing) => {
+          calls.push({ key, existing });
+        });
+
+        await users.delete(id);
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].key).toBe(id);
+        expect(calls[0].existing).toMatchObject({ name: "Alice" });
+      });
+
+      it("does not fire on delete for non-existent item", async () => {
+        const users = db.table<User, number>("users");
+        let deleteCalled = false;
+
+        users.hook.deleting.subscribe(() => {
+          deleteCalled = true;
+        });
+
+        await users.delete(99999);
+
+        expect(deleteCalled).toBe(false);
+      });
+    });
+
+    describe("reading hook", () => {
+      it("fires on get", async () => {
+        const users = db.table<User & { computed?: string }, number>("users");
+        const id = await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+
+        users.hook.reading.subscribe((obj) => ({
+          ...obj,
+          computed: `${obj.name}-computed`,
+        }));
+
+        const user = await users.get(id);
+
+        expect(user?.computed).toBe("Alice-computed");
+      });
+
+      it("fires on bulkGet", async () => {
+        const users = db.table<User & { computed?: string }, number>("users");
+        const [id1, id2] = await users.bulkAdd([
+          { name: "Alice", email: "a@test.com", age: 30 },
+          { name: "Bob", email: "b@test.com", age: 25 },
+        ]);
+
+        users.hook.reading.subscribe((obj) => ({
+          ...obj,
+          computed: `${obj.name}-computed`,
+        }));
+
+        const results = await users.bulkGet([id1, id2]);
+
+        expect(results[0]?.computed).toBe("Alice-computed");
+        expect(results[1]?.computed).toBe("Bob-computed");
+      });
+    });
+  });
+
+  describe("Empty startsWith", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+      ]);
+    });
+
+    it("startsWith empty string matches all", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.where("name").startsWith("").toArray();
+
+      expect(results).toHaveLength(2);
+    });
+  });
+
+  describe("keys() alias", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+      ]);
+    });
+
+    it("keys() is alias for primaryKeys()", async () => {
+      const users = db.table<User, number>("users");
+      const keys = await users.toCollection().keys();
+      const primaryKeys = await users.toCollection().primaryKeys();
+
+      expect(keys).toEqual(primaryKeys);
+    });
+  });
+
+  describe("Direct count optimization", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+      ]);
+    });
+
+    it("uses fast count path for simple collection", async () => {
+      const users = db.table<User, number>("users");
+      // This should use the DB count optimization (no filter, no index, no until, no OR)
+      const count = await users.toCollection().count();
+
+      expect(count).toBe(3);
+    });
+  });
+
+  describe("OR query limit edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+        { name: "Charlie", email: "c@test.com", age: 35 },
+        { name: "Dave", email: "d@test.com", age: 40 },
+        { name: "Eve", email: "e@test.com", age: 45 },
+        { name: "Frank", email: "f@test.com", age: 50 },
+      ]);
+    });
+
+    it("OR query with limit smaller than merged results", async () => {
+      const users = db.table<User, number>("users");
+      // Query should match multiple people: age < 30 (Alice) + age > 40 (Eve, Frank)
+      // But limit to 2
+      const results = await users.where("age").below(30).or("age").above(40).limit(2).toArray();
+
+      expect(results).toHaveLength(2);
+    });
+
+    it("OR query on primary key uses getIndexValue path", async () => {
+      const users = db.table<User, number>("users");
+      // OR on empty string index (primary key)
+      const results = await users.where("age").equals(25).or("").above(4).toArray();
+
+      // Alice (age 25) + users with id > 4 (Eve, Frank with ids 5, 6)
+      expect(results.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("orderBy index queries", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Charlie", email: "c@test.com", age: 35 },
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+      ]);
+    });
+
+    it("orderBy returns items sorted by index", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.orderBy("name").toArray();
+
+      expect(results[0].name).toBe("Alice");
+      expect(results[1].name).toBe("Bob");
+      expect(results[2].name).toBe("Charlie");
+    });
+
+    it("orderBy with reverse returns descending order", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.orderBy("name").reverse().toArray();
+
+      expect(results[0].name).toBe("Charlie");
+      expect(results[1].name).toBe("Bob");
+      expect(results[2].name).toBe("Alice");
+    });
+
+    it("orderBy with count uses toArray path", async () => {
+      const users = db.table<User, number>("users");
+      // count() on orderBy collection uses toArray path since ctx.index is set
+      const count = await users.orderBy("name").count();
+
+      expect(count).toBe(3);
+    });
+  });
+
+  describe("Transaction edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name",
+      });
+      await db.open();
+    });
+
+    it("transaction provides scoped table access", async () => {
+      const users = db.table<User, number>("users");
+      await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+
+      await db.transaction("r", ["users"], async (tx) => {
+        const txUsers = tx.table<User, number>("users");
+        const count = await txUsers.count();
+        expect(count).toBe(1);
+      });
+    });
+  });
+
+  describe("Non-string types in filters", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        items: "++id, value",
+      });
+      await db.open();
+    });
+
+    it("startsWithIgnoreCase returns empty for non-string values", async () => {
+      const items = db.table<{ id?: number; value: unknown }, number>("items");
+      await items.bulkAdd([
+        { value: 123 },
+        { value: "hello" },
+        { value: null },
+        { value: { nested: true } },
+      ]);
+
+      const results = await items.where("value").startsWithIgnoreCase("h").toArray();
+
+      expect(results).toHaveLength(1);
+      expect(results[0].value).toBe("hello");
+    });
+
+    it("equalsIgnoreCase returns empty for non-string values", async () => {
+      const items = db.table<{ id?: number; value: unknown }, number>("items");
+      await items.bulkAdd([{ value: 123 }, { value: "Hello" }, { value: null }]);
+
+      const results = await items.where("value").equalsIgnoreCase("hello").toArray();
+
+      expect(results).toHaveLength(1);
+      expect(results[0].value).toBe("Hello");
+    });
+  });
 });
