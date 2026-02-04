@@ -12,6 +12,8 @@ import {
   hasWorkingGetAll,
   fixUndefinedKey,
   compareKeys,
+  supportsDurability,
+  supportsCommit,
 } from "../compat/index.js";
 import {
   type DBCore,
@@ -32,6 +34,7 @@ import {
   type DBCoreCursor,
   type InternalTransaction,
   type TransactionMode,
+  type TransactionOptions,
   type CursorAlgorithm,
   DBCoreRangeType,
   toDBCoreTableSchema,
@@ -112,6 +115,14 @@ class IDBCoreTransaction implements InternalTransaction {
 
   abort(): void {
     this.idbTransaction.abort();
+  }
+
+  commit(): void {
+    // commit() is supported in Chrome 76+, Firefox 74+, Safari 15+
+    if (supportsCommit()) {
+      this.idbTransaction.commit();
+    }
+    // If not supported, transaction will auto-commit when inactive
   }
 }
 
@@ -226,7 +237,14 @@ class IDBCoreTable implements DBCoreTable {
 
     const values = req.query.range.values!;
     const wantValues = req.values !== false;
-    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
+    // Use 'nextunique'/'prevunique' directions when unique=true for native deduplication
+    const direction: IDBCursorDirection = req.unique
+      ? req.reverse
+        ? "prevunique"
+        : "nextunique"
+      : req.reverse
+        ? "prev"
+        : "next";
     const result: unknown[] = [];
 
     if (this.useGetAll && !req.offset) {
@@ -271,7 +289,14 @@ class IDBCoreTable implements DBCoreTable {
     }
 
     const result: unknown[] = [];
-    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
+    // Use 'nextunique'/'prevunique' directions when unique=true for native deduplication
+    const direction: IDBCursorDirection = req.unique
+      ? req.reverse
+        ? "prevunique"
+        : "nextunique"
+      : req.reverse
+        ? "prev"
+        : "next";
     const wantValues = req.values !== false;
 
     await this.cursorQuery(
@@ -344,7 +369,14 @@ class IDBCoreTable implements DBCoreTable {
 
     // Fall back to cursor
     const result: unknown[] = [];
-    const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
+    // Use 'nextunique'/'prevunique' directions when unique=true for native deduplication
+    const direction: IDBCursorDirection = req.unique
+      ? req.reverse
+        ? "prevunique"
+        : "nextunique"
+      : req.reverse
+        ? "prev"
+        : "next";
     await this.cursorQuery(source, idbRange, direction, req, result, wantValues);
     return { result };
   }
@@ -359,7 +391,12 @@ class IDBCoreTable implements DBCoreTable {
     filter?: (value: unknown, primaryKey: unknown, indexKey: unknown) => boolean,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const cursorRequest = source.openCursor(range, direction);
+      // Use openKeyCursor when we don't need values and there's no filter
+      // openKeyCursor avoids loading record data from disk, improving performance
+      const needsValues = wantValues || filter !== undefined;
+      const cursorRequest = needsValues
+        ? source.openCursor(range, direction)
+        : source.openKeyCursor(range, direction);
       let skipped = 0;
       let collected = 0;
       const limit = req.limit ?? Infinity;
@@ -382,7 +419,11 @@ class IDBCoreTable implements DBCoreTable {
         lastKey = cursor.key;
 
         // Apply custom filter
-        if (filter && !filter(cursor.value, cursor.primaryKey, cursor.key)) {
+        // Note: filter is only set when needsValues is true, so cursor is IDBCursorWithValue
+        if (
+          filter &&
+          !filter((cursor as IDBCursorWithValue).value, cursor.primaryKey, cursor.key)
+        ) {
           cursor.continue();
           return;
         }
@@ -395,7 +436,8 @@ class IDBCoreTable implements DBCoreTable {
         }
 
         // Collect result (value or primaryKey depending on wantValues)
-        result.push(wantValues ? cursor.value : cursor.primaryKey);
+        // Note: when wantValues is true, cursor is IDBCursorWithValue
+        result.push(wantValues ? (cursor as IDBCursorWithValue).value : cursor.primaryKey);
         collected++;
 
         // Check limit
@@ -497,7 +539,11 @@ class IDBCoreTable implements DBCoreTable {
     const wantValues = req.values !== false;
 
     return new Promise((resolve, reject) => {
-      const cursorRequest = source.openCursor(idbRange, direction);
+      // Use openKeyCursor when we don't need values
+      // openKeyCursor avoids loading record data from disk, improving performance
+      const cursorRequest = wantValues
+        ? source.openCursor(idbRange, direction)
+        : source.openKeyCursor(idbRange, direction);
       let skipped = 0;
       const offset = req.offset ?? 0;
 
@@ -517,11 +563,12 @@ class IDBCoreTable implements DBCoreTable {
         }
 
         // Create DBCoreCursor wrapper
+        // Note: when wantValues is true, cursor is IDBCursorWithValue
         const dbCoreCursor: DBCoreCursor = {
           trans: req.trans,
           key: cursor.key,
           primaryKey: cursor.primaryKey,
-          value: wantValues ? cursor.value : undefined,
+          value: wantValues ? (cursor as IDBCursorWithValue).value : undefined,
           done: false,
           continue: (key?: unknown) => {
             if (key !== undefined) {
@@ -806,10 +853,25 @@ export class IDBCore implements DBCore {
     return table;
   }
 
-  transaction(tableNames: string[], mode: TransactionMode): DBCoreTransaction {
+  transaction(
+    tableNames: string[],
+    mode: TransactionMode,
+    options?: TransactionOptions,
+  ): DBCoreTransaction {
     const storeNames = safariMultiStoreFix(tableNames);
     const idbMode = mode === "readwrite" ? "readwrite" : "readonly";
-    const idbTrans = this.idbDatabase.transaction(storeNames, idbMode);
+
+    let idbTrans: IDBTransaction;
+
+    // Use durability option if supported and provided
+    if (options?.durability && supportsDurability()) {
+      idbTrans = this.idbDatabase.transaction(storeNames, idbMode, {
+        durability: options.durability,
+      });
+    } else {
+      idbTrans = this.idbDatabase.transaction(storeNames, idbMode);
+    }
+
     return new IDBCoreTransaction(idbTrans, tableNames, mode);
   }
 }

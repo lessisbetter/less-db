@@ -2,7 +2,12 @@
  * Transaction class - provides a user-friendly transaction API.
  */
 
-import type { DBCore, InternalTransaction, TransactionMode } from "./dbcore/index.js";
+import type {
+  DBCore,
+  InternalTransaction,
+  TransactionMode,
+  TransactionOptions,
+} from "./dbcore/index.js";
 import type { Table } from "./table.js";
 import { AbortError, InvalidTableError, InvalidStateError } from "./errors/index.js";
 
@@ -41,7 +46,12 @@ export interface Transaction {
   readonly active: boolean;
   /** Abort the transaction */
   abort(): void;
+  /** Explicitly commit the transaction (IndexedDB 3.0) */
+  commit(): void;
 }
+
+// Re-export TransactionOptions for convenience
+export type { TransactionOptions };
 
 /**
  * Internal transaction state.
@@ -66,9 +76,10 @@ export function createTransactionState(
   core: DBCore,
   tableNames: string[],
   mode: TransactionMode,
+  options?: TransactionOptions,
 ): TransactionState {
   // Cast to InternalTransaction since our IDBCore implementation provides these properties
-  const coreTrans = core.transaction(tableNames, mode) as InternalTransaction;
+  const coreTrans = core.transaction(tableNames, mode, options) as InternalTransaction;
 
   // Create completion promise that tracks the IDB transaction
   const completion = new Promise<void>((resolve, reject) => {
@@ -109,6 +120,7 @@ export function createTransactionState(
  * @param tableNames - Tables to include in transaction
  * @param mode - Transaction mode
  * @param fn - Function to execute
+ * @param options - Transaction options (durability, etc.)
  * @returns Result of the function
  */
 export async function executeTransaction<T>(
@@ -116,9 +128,10 @@ export async function executeTransaction<T>(
   tableNames: string[],
   mode: TxMode,
   fn: (state: TransactionState) => Promise<T>,
+  options?: TransactionOptions,
 ): Promise<T> {
   const normalizedMode = normalizeMode(mode);
-  const state = createTransactionState(core, tableNames, normalizedMode);
+  const state = createTransactionState(core, tableNames, normalizedMode, options);
 
   try {
     // Execute the user's function
@@ -177,6 +190,16 @@ export class TransactionContext implements Transaction {
     if (this.state.active) {
       this.state.coreTrans.abort();
       this.state.active = false;
+    }
+  }
+
+  commit(): void {
+    if (this.state.active) {
+      try {
+        this.state.coreTrans.commit();
+      } catch {
+        // Transaction may have already completed or failed
+      }
     }
   }
 

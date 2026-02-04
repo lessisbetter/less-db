@@ -24,6 +24,7 @@ import {
   executeTransaction,
   TransactionContext,
   type TransactionState,
+  type TransactionOptions,
   type TxMode,
 } from "./transaction.js";
 import {
@@ -389,6 +390,10 @@ export class LessDB {
         tables: Array.from(this.state.schemas.keys()),
         idbTransaction: transaction,
         abort: () => transaction.abort(),
+        commit: () => {
+          // commit() during upgrade transactions is a no-op
+          // The upgrade transaction auto-commits when complete
+        },
       },
       core: tempCore,
       active: true,
@@ -531,22 +536,35 @@ export class LessDB {
 
   /**
    * Execute a function within an explicit transaction.
+   *
+   * @param mode - Transaction mode: "r" | "readonly" | "rw" | "readwrite"
+   * @param tables - Tables to include in the transaction
+   * @param fn - Function to execute within the transaction
+   * @param options - Transaction options (IndexedDB 3.0 features)
+   * @param options.durability - Durability hint: "default" | "strict" | "relaxed"
    */
   async transaction<T>(
     mode: TxMode,
     tables: Table<unknown, unknown>[] | string[],
     fn: (tx: TransactionContext) => Promise<T>,
+    options?: TransactionOptions,
   ): Promise<T> {
     const core = this.getCore();
     const tableNames = tables.map((t) => (typeof t === "string" ? t : t.name));
 
-    return executeTransaction(core, tableNames, mode, async (state) => {
-      const txContext = new TransactionContext(state, (name, state) =>
-        createTable(core.table(name), () => state.coreTrans, this.getTableHooks(name)),
-      );
+    return executeTransaction(
+      core,
+      tableNames,
+      mode,
+      async (state) => {
+        const txContext = new TransactionContext(state, (name, state) =>
+          createTable(core.table(name), () => state.coreTrans, this.getTableHooks(name)),
+        );
 
-      return fn(txContext);
-    });
+        return fn(txContext);
+      },
+      options,
+    );
   }
 
   // ========================================

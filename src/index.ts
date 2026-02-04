@@ -13,7 +13,12 @@ export { Collection } from "./collection.js";
 export { WhereClause } from "./where-clause.js";
 
 // Transaction
-export { type Transaction, type TxMode, TransactionContext } from "./transaction.js";
+export {
+  type Transaction,
+  type TransactionOptions,
+  type TxMode,
+  TransactionContext,
+} from "./transaction.js";
 
 // Schema
 export {
@@ -76,6 +81,7 @@ export {
   type DBCoreKeyRange,
   type DBCoreCursor,
   type TransactionMode,
+  type TransactionDurability,
   DBCoreRangeType,
   keyRangeEqual,
   keyRangeRange,
@@ -99,4 +105,6 @@ export {
   compareKeys,
   getValueType,
   browserEnv,
+  supportsDurability,
+  supportsCommit,
 } from "./compat/index.js";

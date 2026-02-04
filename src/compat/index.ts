@@ -287,6 +287,48 @@ export function compareKeys(a: unknown, b: unknown): number {
 }
 
 /**
+ * Cache for feature detection results.
+ */
+let cachedSupportsDurability: boolean | undefined;
+let cachedSupportsCommit: boolean | undefined;
+
+/**
+ * Detect if the browser supports transaction durability hints (IndexedDB 3.0).
+ * Supported in Chrome 83+, Firefox 126+, Safari 15.4+.
+ */
+export function supportsDurability(): boolean {
+  if (cachedSupportsDurability !== undefined) return cachedSupportsDurability;
+
+  try {
+    // Check if IDBTransaction has durability property
+    cachedSupportsDurability =
+      typeof IDBTransaction !== "undefined" && "durability" in IDBTransaction.prototype;
+  } catch {
+    cachedSupportsDurability = false;
+  }
+
+  return cachedSupportsDurability;
+}
+
+/**
+ * Detect if the browser supports explicit transaction commit (IndexedDB 3.0).
+ * Supported in Chrome 76+, Firefox 74+, Safari 15+.
+ */
+export function supportsCommit(): boolean {
+  if (cachedSupportsCommit !== undefined) return cachedSupportsCommit;
+
+  try {
+    cachedSupportsCommit =
+      typeof IDBTransaction !== "undefined" &&
+      typeof IDBTransaction.prototype.commit === "function";
+  } catch {
+    cachedSupportsCommit = false;
+  }
+
+  return cachedSupportsCommit;
+}
+
+/**
  * Browser environment detection for conditional features.
  */
 export const browserEnv = {

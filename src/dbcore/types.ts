@@ -15,6 +15,22 @@ import type { TableSchema } from "../schema-parser.js";
 export type TransactionMode = "readonly" | "readwrite";
 
 /**
+ * Transaction durability hint (IndexedDB 3.0).
+ * - "default": Browser decides (Chrome defaults to relaxed since v121)
+ * - "strict": Wait for data to be flushed to persistent storage
+ * - "relaxed": Commit after OS write buffer (faster, may lose data on crash)
+ */
+export type TransactionDurability = "default" | "strict" | "relaxed";
+
+/**
+ * Options for creating a transaction.
+ */
+export interface TransactionOptions {
+  /** Durability hint for write transactions (IndexedDB 3.0) */
+  durability?: TransactionDurability;
+}
+
+/**
  * Key range types for queries.
  */
 export enum DBCoreRangeType {
@@ -74,6 +90,8 @@ export interface DBCoreKeyRange {
 export interface DBCoreTransaction {
   /** Abort the transaction */
   abort(): void;
+  /** Explicitly commit the transaction (IndexedDB 3.0) */
+  commit(): void;
 }
 
 /**
@@ -406,7 +424,11 @@ export interface DBCore {
   table(name: string): DBCoreTable;
 
   /** Create a transaction */
-  transaction(tables: string[], mode: TransactionMode): DBCoreTransaction;
+  transaction(
+    tables: string[],
+    mode: TransactionMode,
+    options?: TransactionOptions,
+  ): DBCoreTransaction;
 }
 
 // ============================================

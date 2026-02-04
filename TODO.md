@@ -342,6 +342,90 @@ db.users
 - [ ] **Performance optimization** - Profile and optimize hot paths
 - [ ] **Table proxy access** - `db.friends` shorthand (partially working, needs testing)
 
+### Phase 5b: IndexedDB 3.0 Optimizations
+
+Leverage modern IndexedDB 3.0 features for improved performance. All features have excellent browser support (Chrome 83+, Firefox 126+, Safari 15+).
+
+#### 5b.1 Transaction Durability Hints (High Priority)
+
+**Goal**: Use `durability: 'relaxed'` for faster writes when strict persistence isn't required.
+
+**Browser support**: Chrome 83+, Firefox 126+, Safari 15.4+
+
+**Implementation tasks**:
+
+- [ ] Add `durability` option to transaction creation in `IDBCore.transaction()`
+- [ ] Expose durability option through `db.transaction()` API
+- [ ] Default to `'default'` for backwards compatibility
+- [ ] Add feature detection in compat layer
+- [ ] Document performance implications
+
+**Usage**:
+
+```typescript
+// Fast writes (may lose data on crash)
+await db.transaction(
+  "rw",
+  ["logs"],
+  async (tx) => {
+    await tx.table("logs").bulkAdd(logs);
+  },
+  { durability: "relaxed" },
+);
+```
+
+#### 5b.2 Explicit Transaction Commit (Medium Priority)
+
+**Goal**: Use `transaction.commit()` to start commit immediately without waiting for all requests.
+
+**Browser support**: Chrome 76+, Firefox 74+, Safari 15+
+
+**Implementation tasks**:
+
+- [ ] Add `commit()` method to `IDBCoreTransaction` class
+- [ ] Expose through `TransactionContext` API
+- [ ] Use internally for bulk operations when beneficial
+- [ ] Add feature detection
+
+#### 5b.3 Use openKeyCursor() for Keys-Only Queries (Medium Priority)
+
+**Goal**: Use `openKeyCursor()` instead of `openCursor()` when only keys are needed.
+
+**Browser support**: Chrome 23+, Firefox 44+, Safari 10.1+ (very old)
+
+**Current behavior**: Always uses `openCursor()` even when `values === false`
+
+**Implementation tasks**:
+
+- [ ] Modify `cursorQuery()` to use `openKeyCursor()` when `wantValues === false`
+- [ ] Update `openCursor()` method in `IDBCoreTable`
+- [ ] Benchmark improvement for `primaryKeys()` queries
+
+#### 5b.4 Unique Cursor Directions (Low Priority)
+
+**Goal**: Use `'nextunique'`/`'prevunique'` cursor directions for deduplication at engine level.
+
+**Current behavior**: Manual deduplication in JavaScript via `lastKey` check
+
+**Implementation tasks**:
+
+- [ ] Use `'nextunique'`/`'prevunique'` when `req.unique === true`
+- [ ] Remove JavaScript-level deduplication when using native unique directions
+- [ ] Benchmark improvement
+
+#### 5b.5 Multi-Entry Indexes (Low Priority)
+
+**Goal**: Support `*tags` syntax for indexing array values.
+
+**Implementation tasks**:
+
+- [ ] Add `*` prefix parsing in schema-parser
+- [ ] Pass `multiEntry: true` to `createIndex()`
+- [ ] Update `DBCoreIndex` type to include `multiEntry` flag
+- [ ] Add tests for multi-entry queries
+
+---
+
 ### Future Extensions (Not Planned for v1)
 
 - [ ] **Encryption middleware** - Encrypt specific fields or entire tables
@@ -384,23 +468,23 @@ src/
 
 ## Test Coverage
 
-| Module              | Tests   | Status |
-| ------------------- | ------- | ------ |
-| errors              | 93      | ✅     |
-| compat              | 50      | ✅     |
-| events              | 36      | ✅     |
-| schema-parser       | 49      | ✅     |
-| promise             | 28      | ✅     |
-| dbcore              | 45      | ✅     |
-| middleware (cache)  | 27      | ✅     |
-| middleware (logging)| 18      | ✅     |
-| middleware          | 10      | ✅     |
-| hooks               | 22      | ✅     |
-| compound-index      | 12      | ✅     |
-| ignore-case         | 22      | ✅     |
-| integration         | 66      | ✅     |
-| less-db             | 268     | ✅     |
-| **Total**           | **746** | ✅     |
+| Module               | Tests   | Status |
+| -------------------- | ------- | ------ |
+| errors               | 93      | ✅     |
+| compat               | 50      | ✅     |
+| events               | 36      | ✅     |
+| schema-parser        | 49      | ✅     |
+| promise              | 28      | ✅     |
+| dbcore               | 45      | ✅     |
+| middleware (cache)   | 27      | ✅     |
+| middleware (logging) | 18      | ✅     |
+| middleware           | 10      | ✅     |
+| hooks                | 22      | ✅     |
+| compound-index       | 12      | ✅     |
+| ignore-case          | 22      | ✅     |
+| integration          | 66      | ✅     |
+| less-db              | 268     | ✅     |
+| **Total**            | **746** | ✅     |
 
 ---
 

@@ -404,6 +404,65 @@ db.on("changes", (changes) => {
 
 ---
 
+## IndexedDB 3.0 Features
+
+LessDB leverages modern IndexedDB 3.0 features where supported for optimal performance.
+
+### Transaction Durability
+
+IndexedDB 3.0 introduces durability hints for transactions:
+
+```typescript
+// Default: Let browser decide
+await db.transaction("rw", ["users"], fn);
+
+// Relaxed: Faster, may lose data on crash (good for logs, caches)
+await db.transaction("rw", ["logs"], fn, { durability: "relaxed" });
+
+// Strict: Wait for data to be flushed to disk
+await db.transaction("rw", ["critical"], fn, { durability: "strict" });
+```
+
+**Values**:
+
+- `'default'` - Browser decides (Chrome defaults to relaxed since v121)
+- `'relaxed'` - Commit after OS write buffer (faster)
+- `'strict'` - Wait for physical disk write (safer)
+
+**Browser support**: Chrome 83+, Firefox 126+, Safari 15.4+
+
+### Explicit Commit
+
+Use `transaction.commit()` to begin commit immediately:
+
+```typescript
+await db.transaction("rw", ["users"], async (tx) => {
+  await tx.table("users").bulkAdd(users);
+  tx.commit(); // Start commit without waiting for request completion
+});
+```
+
+**Browser support**: Chrome 76+, Firefox 74+, Safari 15+
+
+### Key Cursors
+
+For queries that only need keys (not values), LessDB uses `openKeyCursor()` instead of `openCursor()` to avoid loading record data from disk:
+
+```typescript
+// Uses openKeyCursor() internally - faster than loading full records
+const keys = await db.users.where("age").above(30).primaryKeys();
+```
+
+**Browser support**: Chrome 23+, Firefox 44+, Safari 10.1+
+
+### Unique Cursor Directions
+
+For queries with `unique: true`, LessDB uses native `'nextunique'`/`'prevunique'` cursor directions to deduplicate at the engine level rather than in JavaScript.
+
+**Browser support**: All modern browsers
+
+---
+
 ## Browser Compatibility
 
 ### Required Polyfills
@@ -585,11 +644,13 @@ src/
 LessDB uses different strategies for different query types, optimizing for the common case of small-to-medium datasets (under 100,000 records per table).
 
 **Index-based queries** (`where().equals()`, `where().above()`, etc.):
+
 - Use IndexedDB's native key range queries
 - Efficient for any dataset size
 - Results limited by index selectivity
 
 **In-memory filtering queries** (`filter()`, `notEqual()`, `noneOf()`):
+
 - Use `getAll()` to fetch all records, then filter in JavaScript
 - Significantly faster than cursor iteration for most datasets
 - Trade memory for speed
@@ -598,23 +659,25 @@ LessDB uses different strategies for different query types, optimizing for the c
 
 The following operations load all matching records into memory before filtering:
 
-| Operation | Strategy | Performance | Memory |
-|-----------|----------|-------------|--------|
-| `table.filter(fn)` | getAll + Array.filter | 10-20x faster than cursors | O(n) where n = table size |
-| `where(idx).notEqual(v)` | getAll + filter | 10-20x faster than cursors | O(n) where n = table size |
-| `where(idx).noneOf(arr)` | getAll + filter | 100-200x faster than cursors | O(n) where n = table size |
-| `where(idx).equals(v)` | IDB key range | Native speed | O(m) where m = matches |
-| `where(idx).anyOf(arr)` | Parallel IDB queries | Native speed | O(m) where m = matches |
+| Operation                | Strategy              | Performance                  | Memory                    |
+| ------------------------ | --------------------- | ---------------------------- | ------------------------- |
+| `table.filter(fn)`       | getAll + Array.filter | 10-20x faster than cursors   | O(n) where n = table size |
+| `where(idx).notEqual(v)` | getAll + filter       | 10-20x faster than cursors   | O(n) where n = table size |
+| `where(idx).noneOf(arr)` | getAll + filter       | 100-200x faster than cursors | O(n) where n = table size |
+| `where(idx).equals(v)`   | IDB key range         | Native speed                 | O(m) where m = matches    |
+| `where(idx).anyOf(arr)`  | Parallel IDB queries  | Native speed                 | O(m) where m = matches    |
 
 **Why this approach?**
 
 Modern JavaScript engines optimize `getAll()` + `Array.filter()` extremely well:
+
 - Single IndexedDB round-trip (vs one per cursor advance)
 - V8/SpiderMonkey JIT-optimize array iteration
 - No async overhead per record
 - Memory allocation is batched
 
 Cursor-based iteration has inherent overhead:
+
 - Each `cursor.continue()` is an async operation
 - Cannot be JIT-optimized across await boundaries
 - IndexedDB transaction management per step
@@ -622,6 +685,7 @@ Cursor-based iteration has inherent overhead:
 ### When to Consider Alternatives
 
 For very large tables (100,000+ records), the in-memory approach may cause:
+
 - **Memory pressure**: Loading 100k records into memory before filtering
 - **Initial latency**: Time to fetch all records before first result
 
@@ -630,12 +694,17 @@ For very large tables (100,000+ records), the in-memory approach may cause:
 1. **Use indexed queries when possible**: `where('status').equals('active')` is always O(matches), not O(table size)
 
 2. **Combine index + filter**: Narrow with an index first, then filter:
+
    ```typescript
    // Better: uses index to narrow, then filters small result
-   await db.users.where('status').equals('active').filter(u => u.age > 30).toArray();
+   await db.users
+     .where("status")
+     .equals("active")
+     .filter((u) => u.age > 30)
+     .toArray();
 
    // Worse: loads all users into memory
-   await db.users.filter(u => u.status === 'active' && u.age > 30).toArray();
+   await db.users.filter((u) => u.status === "active" && u.age > 30).toArray();
    ```
 
 3. **Add indexes for frequent queries**: If you often filter by a field, add an index for it
@@ -657,6 +726,7 @@ For very large tables (100,000+ records), the in-memory approach may cause:
 In benchmarks against Dexie.js, LessDB shows significant performance gains for filter operations due to this strategy. The tradeoff is intentional: most applications have tables with hundreds to thousands of records, where memory is not a concern but query latency is noticeable.
 
 If your use case involves very large tables with frequent full-table scans, consider:
+
 - Adding appropriate indexes
 - Using server-side filtering for large datasets
 - Implementing custom cursor-based iteration for specific queries
