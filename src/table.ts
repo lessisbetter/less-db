@@ -130,6 +130,57 @@ export class Table<T, TKey> {
   }
 
   /**
+   * Add or update an item in one call.
+   * If the item exists (by key), it merges the changes.
+   * If it doesn't exist, it adds the item.
+   */
+  async upsert(item: T | Partial<T>, key?: TKey): Promise<TKey> {
+    const trans = this._getTransaction();
+
+    // Determine the key to check
+    const keyPath = this.schema.primaryKey.keyPath;
+    const lookupKey = key ?? (keyPath ? (item as Record<string, unknown>)[keyPath] as TKey : undefined);
+
+    if (lookupKey !== undefined) {
+      // Try to get existing item
+      const existing = (await this._coreTable.get(trans, lookupKey)) as T | undefined;
+
+      if (existing) {
+        // Merge and update
+        const merged = { ...existing, ...item } as T;
+        this.hook.updating.fire(item as Partial<T>, lookupKey, existing);
+
+        const result = await this._coreTable.mutate(trans, {
+          type: 'put',
+          values: [merged],
+          keys: [lookupKey],
+        });
+
+        if (result.numFailures > 0) {
+          throw result.failures![0];
+        }
+
+        return lookupKey;
+      }
+    }
+
+    // Item doesn't exist, add it
+    this.hook.creating.fire(lookupKey, item as T);
+
+    const result = await this._coreTable.mutate(trans, {
+      type: 'add',
+      values: [item],
+      keys: lookupKey !== undefined ? [lookupKey] : undefined,
+    });
+
+    if (result.numFailures > 0) {
+      throw result.failures![0];
+    }
+
+    return result.results![0] as TKey;
+  }
+
+  /**
    * Delete an item by key.
    */
   async delete(key: TKey): Promise<void> {
@@ -219,6 +270,55 @@ export class Table<T, TKey> {
     }
 
     return result.results as TKey[];
+  }
+
+  /**
+   * Update multiple items by key. Returns number of items updated.
+   */
+  async bulkUpdate(
+    keysAndChanges: { key: TKey; changes: Partial<T> }[]
+  ): Promise<number> {
+    if (keysAndChanges.length === 0) {
+      return 0;
+    }
+
+    const trans = this._getTransaction();
+
+    // Get all existing items
+    const keys = keysAndChanges.map((kc) => kc.key);
+    const existingItems = (await this._coreTable.getMany(trans, keys)) as (T | undefined)[];
+
+    // Prepare updates for items that exist
+    const updates: { key: TKey; value: T }[] = [];
+    for (let i = 0; i < keysAndChanges.length; i++) {
+      const existing = existingItems[i];
+      if (existing !== undefined) {
+        const { key, changes } = keysAndChanges[i];
+        this.hook.updating.fire(changes, key, existing);
+        const merged = { ...existing, ...changes } as T;
+        updates.push({ key, value: merged });
+      }
+    }
+
+    if (updates.length === 0) {
+      return 0;
+    }
+
+    // Put all updates
+    const result = await this._coreTable.mutate(trans, {
+      type: 'put',
+      values: updates.map((u) => u.value),
+      keys: updates.map((u) => u.key),
+    });
+
+    if (result.numFailures > 0) {
+      const errors = Object.entries(result.failures!).map(
+        ([idx, err]) => `[${idx}]: ${err.message}`
+      );
+      throw new ConstraintError(`BulkUpdate failed: ${errors.join(', ')}`);
+    }
+
+    return updates.length;
   }
 
   /**

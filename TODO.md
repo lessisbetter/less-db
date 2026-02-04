@@ -12,7 +12,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 3. **Extensible** - Hooks and middleware for reactivity, encryption, sync
 4. **Typed** - First-class TypeScript support
 
-**Current Status**: Phase 1 & 2 complete, Phase 3 partial
+**Current Status**: Phase 1, 2, 2b, and 3 complete
 
 ---
 
@@ -38,26 +38,38 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 - [x] Collection mutations (`modify`, `delete`)
 - [x] `primaryKeys()` / `keys()`
 
-### Phase 3: Extensibility (Partial)
+### Phase 2b: Additional Dexie API Compatibility
+- [x] `Table.upsert()` - Add or update in one call
+- [x] `Table.bulkUpdate()` - Batch update operations
+- [x] `WhereClause.anyOfIgnoreCase()` - Case-insensitive anyOf
+- [x] `WhereClause.startsWithAnyOf()` - Multiple prefix matching
+- [x] `WhereClause.startsWithAnyOfIgnoreCase()` - Case-insensitive multiple prefix
+- [x] `WhereClause.inAnyRange()` - Complex range queries
+- [x] `Collection.or()` - Combine queries with OR logic
+- [x] `Collection.until()` - Stop iteration on condition
+- [x] `Collection.clone()` - Copy collection configuration
+- [x] `Collection.desc()` - Alias for reverse()
+- [x] `Collection.raw()` - Skip reading hooks flag
+- [x] `Collection.eachKey()` - Iterate over keys only
+- [x] `Collection.eachPrimaryKey()` - Iterate over primary keys
+- [x] `Collection.firstKey()` - Get first key without value
+- [x] `Collection.lastKey()` - Get last key without value
+
+### Phase 3: Extensibility
 - [x] Table hooks (`creating`, `reading`, `updating`, `deleting`)
 - [x] Database events (`ready`, `blocked`, `versionchange`, `close`, `changes`)
 - [x] DBCore abstraction layer (foundation for middleware)
+- [x] **Middleware system** - `db.use(middleware)` and `db.unuse(middleware)` API
+- [x] **bfcache handling** - `setupBfCacheHandling()` for back/forward cache support
 
 ### Infrastructure
 - [x] TypeScript with strict types
-- [x] Vitest test suite (226 tests passing)
+- [x] Vitest test suite (255 tests passing)
 - [x] ~80% code coverage
 
 ---
 
 ## Remaining 🚧
-
-### Phase 3: Extensibility (Remaining)
-- [ ] **Middleware system** - `db.use(middleware)` API for wrapping DBCore
-  - Needed for: encryption, sync tracking, caching, logging
-  - DBCore interfaces exist, just need the registration/wrapping logic
-- [ ] **bfcache handling** - Close/reopen on `pagehide`/`pageshow`
-  - `setupBfCacheHandling()` function exists in spec but not implemented
 
 ### Phase 4: Polish
 - [ ] **Documentation** - API docs, usage examples, migration guide from Dexie
@@ -114,8 +126,8 @@ src/
 | events | 33 | ✅ |
 | schema-parser | 35 | ✅ |
 | dbcore | 36 | ✅ |
-| less-db (integration) | 61 | ✅ |
-| **Total** | **226** | ✅ |
+| less-db (integration) | 90 | ✅ |
+| **Total** | **255** | ✅ |
 
 ---
 

@@ -80,12 +80,14 @@ interface Table<T, TKey> {
   add(item: T, key?: TKey): Promise<TKey>;
   put(item: T, key?: TKey): Promise<TKey>;
   update(key: TKey, changes: Partial<T>): Promise<number>;
+  upsert(item: T | Partial<T>, key?: TKey): Promise<TKey>;  // Add or update in one call
   delete(key: TKey): Promise<void>;
 
   // Bulk operations
   bulkGet(keys: TKey[]): Promise<(T | undefined)[]>;
   bulkAdd(items: T[], keys?: TKey[]): Promise<TKey[]>;
   bulkPut(items: T[], keys?: TKey[]): Promise<TKey[]>;
+  bulkUpdate(keysAndChanges: { key: TKey; changes: Partial<T> }[]): Promise<number>;
   bulkDelete(keys: TKey[]): Promise<void>;
 
   // Full table operations
@@ -116,8 +118,10 @@ interface Table<T, TKey> {
 interface WhereClause<T, TKey> {
   // Equality
   equals(value: any): Collection<T, TKey>;
+  equalsIgnoreCase(value: string): Collection<T, TKey>;
   notEqual(value: any): Collection<T, TKey>;
   anyOf(values: any[]): Collection<T, TKey>;
+  anyOfIgnoreCase(values: string[]): Collection<T, TKey>;
   noneOf(values: any[]): Collection<T, TKey>;
 
   // Ranges
@@ -126,10 +130,13 @@ interface WhereClause<T, TKey> {
   below(value: any): Collection<T, TKey>;
   belowOrEqual(value: any): Collection<T, TKey>;
   between(lower: any, upper: any, includeLower?: boolean, includeUpper?: boolean): Collection<T, TKey>;
+  inAnyRange(ranges: [any, any][], options?: { includeLowers?: boolean; includeUppers?: boolean }): Collection<T, TKey>;
 
   // String operations
   startsWith(prefix: string): Collection<T, TKey>;
   startsWithIgnoreCase(prefix: string): Collection<T, TKey>;
+  startsWithAnyOf(prefixes: string[]): Collection<T, TKey>;
+  startsWithAnyOfIgnoreCase(prefixes: string[]): Collection<T, TKey>;
 }
 ```
 
@@ -140,13 +147,19 @@ interface Collection<T, TKey> {
   // Filtering (returns new Collection)
   and(fn: (item: T) => boolean): Collection<T, TKey>;
   filter(fn: (item: T) => boolean): Collection<T, TKey>;
+  or(indexName: string): WhereClause<T, TKey>;  // Combine with OR logic
 
   // Pagination
   limit(count: number): Collection<T, TKey>;
   offset(count: number): Collection<T, TKey>;
+  until(predicate: (item: T) => boolean, includeStopItem?: boolean): Collection<T, TKey>;
 
   // Ordering
   reverse(): Collection<T, TKey>;
+  desc(): Collection<T, TKey>;  // Alias for reverse()
+
+  // Cloning
+  clone(): Collection<T, TKey>;
 
   // Terminal operations (execute query)
   toArray(): Promise<T[]>;
@@ -155,6 +168,10 @@ interface Collection<T, TKey> {
   count(): Promise<number>;
   keys(): Promise<TKey[]>;
   primaryKeys(): Promise<TKey[]>;
+  eachKey(callback: (key: TKey) => void): Promise<void>;
+  eachPrimaryKey(callback: (key: TKey) => void): Promise<void>;
+  firstKey(): Promise<TKey | undefined>;
+  lastKey(): Promise<TKey | undefined>;
 
   // Iteration
   each(callback: (item: T) => void): Promise<void>;
@@ -165,6 +182,9 @@ interface Collection<T, TKey> {
 
   // Sorting (non-indexed, loads all into memory)
   sortBy(keyPath: string): Promise<T[]>;
+
+  // Advanced
+  raw(): Collection<T, TKey>;  // Skip reading hooks
 }
 ```
 
@@ -576,30 +596,36 @@ db.use(syncMiddleware({
 
 ## Implementation Priorities
 
-### Phase 1: Core (MVP)
-- [ ] Schema parsing
-- [ ] LessDB class with version/stores
-- [ ] Table with basic CRUD
-- [ ] Simple Collection (filter, toArray, count)
-- [ ] Basic transaction support
-- [ ] Browser compatibility layer
-- [ ] Error classes
+### Phase 1: Core (MVP) ✅
+- [x] Schema parsing
+- [x] LessDB class with version/stores
+- [x] Table with basic CRUD
+- [x] Simple Collection (filter, toArray, count)
+- [x] Basic transaction support
+- [x] Browser compatibility layer
+- [x] Error classes
 
-### Phase 2: Query Power
-- [ ] WhereClause with all range methods
-- [ ] Collection chaining (and, limit, offset, reverse)
-- [ ] Bulk operations
-- [ ] orderBy / sortBy
+### Phase 2: Query Power ✅
+- [x] WhereClause with all range methods
+- [x] Collection chaining (and, limit, offset, reverse)
+- [x] Bulk operations
+- [x] orderBy / sortBy
 
-### Phase 3: Extensibility
-- [ ] Middleware system (DBCore wrapper)
-- [ ] Table hooks
-- [ ] Events (changes, ready, etc.)
-- [ ] bfcache handling
+### Phase 2b: Additional Dexie Compatibility ✅
+- [x] Table.upsert() / bulkUpdate()
+- [x] WhereClause.anyOfIgnoreCase() / startsWithAnyOf() / inAnyRange()
+- [x] Collection.or() / until() / clone() / desc() / raw()
+- [x] Collection.firstKey() / lastKey() / eachKey() / eachPrimaryKey()
+
+### Phase 3: Extensibility ✅
+- [x] Middleware system (db.use() / db.unuse())
+- [x] Table hooks
+- [x] Events (changes, ready, etc.)
+- [x] bfcache handling (setupBfCacheHandling())
 
 ### Phase 4: Polish
-- [ ] Full TypeScript generics
-- [ ] Comprehensive tests
+- [x] Full TypeScript generics
+- [x] Comprehensive tests (253 tests)
 - [ ] Documentation
 - [ ] Performance optimization
 
@@ -615,23 +641,33 @@ db.use(syncMiddleware({
 |---------|--------|-------|-------|
 | `new DB(name)` | ✅ | ✅ | Identical |
 | `db.version(n).stores({})` | ✅ | ✅ | Identical |
-| `db.table.get/add/put/delete` | ✅ | ✅ | Identical |
+| `db.table.get/add/put/update/delete` | ✅ | ✅ | Identical |
+| `db.table.upsert()` | ✅ | ✅ | Identical |
 | `db.table.bulkGet/bulkAdd/bulkPut/bulkDelete` | ✅ | ✅ | Identical |
-| `db.table.where().equals()` | ✅ | ✅ | Identical |
+| `db.table.bulkUpdate()` | ✅ | ✅ | Identical |
+| `db.table.where().equals/equalsIgnoreCase()` | ✅ | ✅ | Identical |
 | `db.table.where().above/below/between()` | ✅ | ✅ | Identical |
-| `db.table.where().anyOf/noneOf()` | ✅ | ✅ | Identical |
-| `db.table.where().startsWith()` | ✅ | ✅ | Identical |
+| `db.table.where().anyOf/anyOfIgnoreCase/noneOf()` | ✅ | ✅ | Identical |
+| `db.table.where().inAnyRange()` | ✅ | ✅ | Identical |
+| `db.table.where().startsWith/startsWithIgnoreCase()` | ✅ | ✅ | Identical |
+| `db.table.where().startsWithAnyOf/startsWithAnyOfIgnoreCase()` | ✅ | ✅ | Identical |
 | `collection.filter().limit().offset()` | ✅ | ✅ | Identical |
+| `collection.or()` | ✅ | ✅ | Identical |
+| `collection.until()` | ✅ | ✅ | Identical |
+| `collection.clone()` | ✅ | ✅ | Identical |
 | `collection.first/last/count/toArray()` | ✅ | ✅ | Identical |
+| `collection.firstKey/lastKey/eachKey/eachPrimaryKey()` | ✅ | ✅ | Identical |
 | `collection.modify/delete()` | ✅ | ✅ | Identical |
+| `collection.raw()` | ✅ | ✅ | Identical |
 | `db.transaction('rw', [...], fn)` | ✅ | ✅ | Identical |
 | `db.table.hook.creating/reading/etc` | ✅ | ✅ | Identical |
 | `db.on('ready'/'close'/etc)` | ✅ | ✅ | Identical |
-| `db.use(middleware)` | 🚧 | ✅ | Planned |
+| `db.use(middleware)` | ✅ | ✅ | Identical |
 | `liveQuery()` | ❌ | ✅ | Not planned for v1 |
 | Compound indexes `[a+b]` | ❌ | ✅ | Not planned for v1 |
 | Multi-entry indexes `*tags` | ❌ | ✅ | Not planned for v1 |
-| Entity classes | ❌ | ✅ | Not planned |
+| Entity classes / `mapToClass()` | ❌ | ✅ | Not planned |
+| `collection.distinct/uniqueKeys/eachUniqueKey()` | ❌ | ✅ | Requires multi-entry indexes |
 
 ### Migration from Dexie
 

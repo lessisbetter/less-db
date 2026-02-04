@@ -5,7 +5,7 @@
  */
 
 // Main database class
-export { LessDB, createLessDB } from './less-db.js';
+export { LessDB, createLessDB, type Middleware } from './less-db.js';
 
 // Table and query classes
 export { Table } from './table.js';

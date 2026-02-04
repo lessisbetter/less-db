@@ -787,4 +787,434 @@ describe('LessDB', () => {
       expect(closeFired).toBe(true);
     });
   });
+
+  describe('Table.upsert', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name, email',
+      });
+      await db.open();
+    });
+
+    it('inserts new item when key does not exist', async () => {
+      const users = db.table<User, number>('users');
+      const key = await users.upsert({ name: 'Alice', email: 'a@test.com', age: 30 });
+
+      const user = await users.get(key);
+      expect(user?.name).toBe('Alice');
+    });
+
+    it('updates existing item when key exists', async () => {
+      const users = db.table<User, number>('users');
+      const id = await users.add({ name: 'Alice', email: 'a@test.com', age: 30 });
+
+      await users.upsert({ id, name: 'Alice Updated', email: 'updated@test.com', age: 31 });
+
+      const user = await users.get(id);
+      expect(user?.name).toBe('Alice Updated');
+      expect(user?.age).toBe(31);
+    });
+
+    it('merges partial changes on existing item', async () => {
+      const users = db.table<User, number>('users');
+      const id = await users.add({ name: 'Alice', email: 'a@test.com', age: 30 });
+
+      await users.upsert({ id, age: 35 } as Partial<User>);
+
+      const user = await users.get(id);
+      expect(user?.name).toBe('Alice'); // Unchanged
+      expect(user?.age).toBe(35); // Updated
+    });
+  });
+
+  describe('Table.bulkUpdate', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name',
+      });
+      await db.open();
+    });
+
+    it('updates multiple items', async () => {
+      const users = db.table<User, number>('users');
+      const [id1, id2, id3] = await users.bulkAdd([
+        { name: 'Alice', email: 'a@test.com', age: 25 },
+        { name: 'Bob', email: 'b@test.com', age: 30 },
+        { name: 'Charlie', email: 'c@test.com', age: 35 },
+      ]);
+
+      const updated = await users.bulkUpdate([
+        { key: id1, changes: { age: 26 } },
+        { key: id2, changes: { age: 31 } },
+      ]);
+
+      expect(updated).toBe(2);
+
+      const alice = await users.get(id1);
+      const bob = await users.get(id2);
+      expect(alice?.age).toBe(26);
+      expect(bob?.age).toBe(31);
+    });
+
+    it('returns 0 for non-existent keys', async () => {
+      const users = db.table<User, number>('users');
+
+      const updated = await users.bulkUpdate([
+        { key: 999, changes: { age: 99 } },
+      ]);
+
+      expect(updated).toBe(0);
+    });
+
+    it('updates only existing items', async () => {
+      const users = db.table<User, number>('users');
+      const id = await users.add({ name: 'Alice', email: 'a@test.com', age: 25 });
+
+      const updated = await users.bulkUpdate([
+        { key: id, changes: { age: 30 } },
+        { key: 999, changes: { age: 99 } }, // Non-existent
+      ]);
+
+      expect(updated).toBe(1);
+    });
+  });
+
+  describe('WhereClause extensions', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name, age',
+      });
+      await db.open();
+
+      const users = db.table<User, number>('users');
+      await users.bulkAdd([
+        { name: 'Alice', email: 'a@test.com', age: 25 },
+        { name: 'ALICE', email: 'upper@test.com', age: 26 },
+        { name: 'Bob', email: 'b@test.com', age: 30 },
+        { name: 'Charlie', email: 'c@test.com', age: 35 },
+        { name: 'Dave', email: 'd@test.com', age: 40 },
+      ]);
+    });
+
+    it('anyOfIgnoreCase matches case-insensitively', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.where('name').anyOfIgnoreCase(['alice', 'BOB']).toArray();
+
+      expect(results).toHaveLength(3); // Alice, ALICE, Bob
+    });
+
+    it('startsWithAnyOf matches multiple prefixes', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.where('name').startsWithAnyOf(['Al', 'Ch']).toArray();
+
+      expect(results).toHaveLength(2); // Alice, Charlie (ALICE doesn't start with Al)
+    });
+
+    it('startsWithAnyOfIgnoreCase matches case-insensitively', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.where('name').startsWithAnyOfIgnoreCase(['al', 'ch']).toArray();
+
+      expect(results).toHaveLength(3); // Alice, ALICE, Charlie
+    });
+
+    it('inAnyRange matches values in any range', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.where('age').inAnyRange([
+        [20, 27],  // Alice (25), ALICE (26)
+        [35, 45],  // Charlie (35), Dave (40)
+      ]).toArray();
+
+      expect(results).toHaveLength(4);
+    });
+  });
+
+  describe('Collection.or', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name, age',
+      });
+      await db.open();
+
+      const users = db.table<User, number>('users');
+      await users.bulkAdd([
+        { name: 'Alice', email: 'a@test.com', age: 25 },
+        { name: 'Bob', email: 'b@test.com', age: 30 },
+        { name: 'Charlie', email: 'c@test.com', age: 35 },
+        { name: 'Dave', email: 'd@test.com', age: 40 },
+        { name: 'Eve', email: 'e@test.com', age: 45 },
+      ]);
+    });
+
+    it('combines queries with OR logic', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users
+        .where('age').below(30)
+        .or('age').above(40)
+        .toArray();
+
+      // Alice (25) OR Eve (45)
+      expect(results).toHaveLength(2);
+      expect(results.map(u => u.name).sort()).toEqual(['Alice', 'Eve']);
+    });
+
+    it('deduplicates results', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users
+        .where('age').equals(25)
+        .or('name').equals('Alice')
+        .toArray();
+
+      // Should only have Alice once
+      expect(results).toHaveLength(1);
+    });
+
+    it('throws on modify() with OR', async () => {
+      const users = db.table<User, number>('users');
+
+      await expect(
+        users.where('age').below(30).or('age').above(40).modify({ age: 99 })
+      ).rejects.toThrow('modify() does not support OR queries');
+    });
+
+    it('throws on delete() with OR', async () => {
+      const users = db.table<User, number>('users');
+
+      await expect(
+        users.where('age').below(30).or('age').above(40).delete()
+      ).rejects.toThrow('delete() does not support OR queries');
+    });
+  });
+
+  describe('Collection extensions', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name, age',
+      });
+      await db.open();
+
+      const users = db.table<User, number>('users');
+      await users.bulkAdd([
+        { name: 'Alice', email: 'a@test.com', age: 25 },
+        { name: 'Bob', email: 'b@test.com', age: 30 },
+        { name: 'Charlie', email: 'c@test.com', age: 35 },
+        { name: 'Dave', email: 'd@test.com', age: 40 },
+        { name: 'Eve', email: 'e@test.com', age: 45 },
+      ]);
+    });
+
+    it('until stops iteration at predicate', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.orderBy('age').until(u => u.age >= 35).toArray();
+
+      // Alice (25), Bob (30) - stops before Charlie (35)
+      expect(results).toHaveLength(2);
+      expect(results.map(u => u.name)).toEqual(['Alice', 'Bob']);
+    });
+
+    it('until includes stop item when specified', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.orderBy('age').until(u => u.age >= 35, true).toArray();
+
+      // Alice (25), Bob (30), Charlie (35)
+      expect(results).toHaveLength(3);
+    });
+
+    it('clone creates independent collection', async () => {
+      const users = db.table<User, number>('users');
+      const collection = users.toCollection().limit(3);
+      const cloned = collection.clone().limit(2);
+
+      const original = await collection.toArray();
+      const clonedResults = await cloned.toArray();
+
+      expect(original).toHaveLength(3);
+      expect(clonedResults).toHaveLength(2);
+    });
+
+    it('desc is alias for reverse', async () => {
+      const users = db.table<User, number>('users');
+      const descResults = await users.orderBy('age').desc().limit(2).toArray();
+      const reverseResults = await users.orderBy('age').reverse().limit(2).toArray();
+
+      expect(descResults).toEqual(reverseResults);
+      expect(descResults[0].name).toBe('Eve'); // Oldest first
+    });
+
+    it('firstKey returns first key', async () => {
+      const users = db.table<User, number>('users');
+      const key = await users.orderBy('age').firstKey();
+
+      expect(key).toBeDefined();
+    });
+
+    it('lastKey returns last key', async () => {
+      const users = db.table<User, number>('users');
+      const key = await users.orderBy('age').lastKey();
+
+      expect(key).toBeDefined();
+    });
+
+    it('eachKey iterates over keys', async () => {
+      const users = db.table<User, number>('users');
+      const keys: number[] = [];
+
+      await users.toCollection().limit(3).eachKey(key => keys.push(key));
+
+      expect(keys).toHaveLength(3);
+    });
+
+    it('eachPrimaryKey iterates over primary keys', async () => {
+      const users = db.table<User, number>('users');
+      const keys: number[] = [];
+
+      await users.toCollection().limit(3).eachPrimaryKey(key => keys.push(key));
+
+      expect(keys).toHaveLength(3);
+    });
+
+    it('raw returns a collection', async () => {
+      // raw() is used to skip reading hooks, but reading hooks currently only
+      // apply to get/bulkGet, not toArray. This test verifies raw() exists and works.
+      const users = db.table<User, number>('users');
+
+      const rawResults = await users.toCollection().limit(2).raw().toArray();
+
+      expect(rawResults).toHaveLength(2);
+    });
+  });
+
+  describe('middleware', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name',
+      });
+    });
+
+    it('registers middleware', async () => {
+      let middlewareCalled = false;
+
+      const middleware = {
+        name: 'test-middleware',
+        level: 1,
+        create: (downCore: any) => {
+          middlewareCalled = true;
+          return downCore;
+        },
+      };
+
+      db.use(middleware);
+      await db.open();
+
+      expect(middlewareCalled).toBe(true);
+    });
+
+    it('allows middleware to wrap operations', async () => {
+      const operations: string[] = [];
+
+      const middleware = {
+        name: 'logging-middleware',
+        create: (downCore: any) => {
+          // Properly wrap the core, preserving all methods
+          const wrappedTables = new Map();
+
+          return {
+            tables: downCore.tables,
+            transaction: (tables: string[], mode: string) => downCore.transaction(tables, mode),
+            table: (name: string) => {
+              if (!wrappedTables.has(name)) {
+                const downTable = downCore.table(name);
+                wrappedTables.set(name, {
+                  ...downTable,
+                  get: async (trans: any, key: any) => {
+                    operations.push(`get:${name}:${key}`);
+                    return downTable.get(trans, key);
+                  },
+                  mutate: async (trans: any, req: any) => {
+                    operations.push(`mutate:${name}:${req.type}`);
+                    return downTable.mutate(trans, req);
+                  },
+                });
+              }
+              return wrappedTables.get(name);
+            },
+          };
+        },
+      };
+
+      db.use(middleware);
+      await db.open();
+
+      const users = db.table<User, number>('users');
+      const id = await users.add({ name: 'Alice', email: 'a@test.com', age: 30 });
+      await users.get(id);
+
+      expect(operations).toContain('mutate:users:add');
+      expect(operations).toContain('get:users:1');
+    });
+
+    it('unregisters middleware', async () => {
+      let middlewareCalled = false;
+
+      const middleware = {
+        name: 'test-middleware',
+        create: (downCore: any) => {
+          middlewareCalled = true;
+          return downCore;
+        },
+      };
+
+      db.use(middleware);
+      db.unuse(middleware);
+      await db.open();
+
+      // Middleware should not be called after unuse
+      expect(middlewareCalled).toBe(false);
+    });
+
+    it('applies middleware in level order', async () => {
+      const order: string[] = [];
+
+      db.use({
+        name: 'high-level',
+        level: 10,
+        create: (downCore: any) => {
+          order.push('high');
+          return downCore;
+        },
+      });
+
+      db.use({
+        name: 'low-level',
+        level: 1,
+        create: (downCore: any) => {
+          order.push('low');
+          return downCore;
+        },
+      });
+
+      await db.open();
+
+      // Low level should be applied first (closer to IndexedDB)
+      expect(order).toEqual(['low', 'high']);
+    });
+  });
+
+  describe('bfcache handling', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name',
+      });
+    });
+
+    it('setupBfCacheHandling returns this for chaining', async () => {
+      const result = db.setupBfCacheHandling();
+      expect(result).toBe(db);
+    });
+
+    it('_requery exists and is callable', async () => {
+      await db.open();
+      // Should not throw
+      expect(() => db._requery()).not.toThrow();
+    });
+  });
 });

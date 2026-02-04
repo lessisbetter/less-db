@@ -48,6 +48,18 @@ interface VersionDefinition {
 }
 
 /**
+ * Middleware for wrapping database operations.
+ */
+export interface Middleware {
+  /** Middleware name (for debugging) */
+  name: string;
+  /** Execution order (lower = closer to IndexedDB). Default: 0 */
+  level?: number;
+  /** Create wrapped DBCore */
+  create(downCore: DBCore): DBCore;
+}
+
+/**
  * Database state.
  */
 interface DatabaseState {
@@ -77,6 +89,9 @@ export class LessDB {
 
   /** Version definitions */
   private versions: VersionDefinition[] = [];
+
+  /** Registered middleware */
+  private middleware: Middleware[] = [];
 
   /** Internal state */
   private state: DatabaseState = {
@@ -234,7 +249,7 @@ export class LessDB {
 
         // Initialize state
         this.state.idbDatabase = db;
-        this.state.core = createIDBCore(db, this.state.schemas);
+        this.state.core = this.buildCore(db);
         this.state.isOpen = true;
 
         // Create table proxies
@@ -517,6 +532,102 @@ export class LessDB {
   get verno(): number {
     if (this.versions.length === 0) return 0;
     return this.versions[this.versions.length - 1].version;
+  }
+
+  // ========================================
+  // Middleware
+  // ========================================
+
+  /**
+   * Register middleware to wrap database operations.
+   * Middleware is applied in level order (lowest first, closest to IndexedDB).
+   */
+  use(middleware: Middleware): this {
+    this.middleware.push(middleware);
+    // Sort by level (lowest first)
+    this.middleware.sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+
+    // If database is already open, rebuild the core with new middleware
+    if (this.state.isOpen && this.state.idbDatabase) {
+      this.state.core = this.buildCore(this.state.idbDatabase);
+    }
+
+    return this;
+  }
+
+  /**
+   * Unregister middleware.
+   */
+  unuse(middleware: Middleware): this {
+    const idx = this.middleware.indexOf(middleware);
+    if (idx !== -1) {
+      this.middleware.splice(idx, 1);
+
+      // If database is already open, rebuild the core without the middleware
+      if (this.state.isOpen && this.state.idbDatabase) {
+        this.state.core = this.buildCore(this.state.idbDatabase);
+      }
+    }
+    return this;
+  }
+
+  /**
+   * Build the DBCore with middleware applied.
+   */
+  private buildCore(db: IDBDatabase): DBCore {
+    // Start with the base IDB core
+    let core: DBCore = createIDBCore(db, this.state.schemas);
+
+    // Apply middleware in level order (lowest to highest)
+    // This means lowest level middleware is closest to IndexedDB
+    for (const mw of this.middleware) {
+      core = mw.create(core);
+    }
+
+    return core;
+  }
+
+  // ========================================
+  // Browser compatibility
+  // ========================================
+
+  /**
+   * Set up bfcache (back/forward cache) handling.
+   * Closes the database when page is persisted to bfcache,
+   * and re-opens it when restored.
+   */
+  setupBfCacheHandling(): this {
+    if (typeof addEventListener === 'undefined') {
+      return this;
+    }
+
+    addEventListener('pagehide', (event) => {
+      if ((event as PageTransitionEvent).persisted) {
+        // Page is being cached - close the database but allow auto-reopen
+        this.close();
+      }
+    });
+
+    addEventListener('pageshow', (event) => {
+      if ((event as PageTransitionEvent).persisted) {
+        // Page was restored from cache
+        // NOTE: Database must be manually reopened with open() before use
+        // For reactivity: trigger observers to re-fetch (when implemented)
+        this._requery();
+      }
+    });
+
+    return this;
+  }
+
+  /**
+   * Trigger observers to re-fetch data.
+   * This is a placeholder for future reactivity support.
+   * @internal
+   */
+  _requery(): void {
+    // Placeholder for future live query support
+    // When implemented, this will notify all active observers to re-run their queries
   }
 }
 

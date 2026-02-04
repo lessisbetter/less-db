@@ -12,6 +12,7 @@ import {
   DBCoreRangeType,
 } from './dbcore/index.js';
 import { Collection, type CollectionContext } from './collection.js';
+import { compareKeys } from './compat/index.js';
 
 /**
  * WhereClause for building index queries.
@@ -215,6 +216,166 @@ export class WhereClause<T, TKey> {
         const itemValue = this.getIndexValue(item);
         if (typeof itemValue !== 'string') return false;
         return itemValue.toLowerCase() === lowerValue;
+      },
+      reverse: false,
+      unique: false,
+    };
+
+    return new Collection(ctx, this.getTransaction);
+  }
+
+  /**
+   * Match any of the given values (case-insensitive).
+   */
+  anyOfIgnoreCase(values: string[]): Collection<T, TKey> {
+    if (values.length === 0) {
+      // Empty array - return empty collection
+      const ctx: CollectionContext = {
+        table: this.table,
+        index: this.indexName,
+        range: keyRangeRange(undefined, undefined),
+        filter: () => false,
+        reverse: false,
+        unique: false,
+      };
+      return new Collection(ctx, this.getTransaction);
+    }
+
+    const lowerValues = new Set(values.map((v) => v.toLowerCase()));
+
+    const ctx: CollectionContext = {
+      table: this.table,
+      index: this.indexName,
+      range: keyRangeRange(undefined, undefined),
+      filter: (item: unknown) => {
+        const itemValue = this.getIndexValue(item);
+        if (typeof itemValue !== 'string') return false;
+        return lowerValues.has(itemValue.toLowerCase());
+      },
+      reverse: false,
+      unique: false,
+    };
+
+    return new Collection(ctx, this.getTransaction);
+  }
+
+  /**
+   * Match strings that start with any of the given prefixes.
+   */
+  startsWithAnyOf(prefixes: string[]): Collection<T, TKey> {
+    if (prefixes.length === 0) {
+      // Empty array - return empty collection
+      const ctx: CollectionContext = {
+        table: this.table,
+        index: this.indexName,
+        range: keyRangeRange(undefined, undefined),
+        filter: () => false,
+        reverse: false,
+        unique: false,
+      };
+      return new Collection(ctx, this.getTransaction);
+    }
+
+    if (prefixes.length === 1) {
+      return this.startsWith(prefixes[0]);
+    }
+
+    // Use filter for multiple prefixes
+    const ctx: CollectionContext = {
+      table: this.table,
+      index: this.indexName,
+      range: keyRangeRange(undefined, undefined),
+      filter: (item: unknown) => {
+        const value = this.getIndexValue(item);
+        if (typeof value !== 'string') return false;
+        return prefixes.some((prefix) => value.startsWith(prefix));
+      },
+      reverse: false,
+      unique: false,
+    };
+
+    return new Collection(ctx, this.getTransaction);
+  }
+
+  /**
+   * Match strings that start with any of the given prefixes (case-insensitive).
+   */
+  startsWithAnyOfIgnoreCase(prefixes: string[]): Collection<T, TKey> {
+    if (prefixes.length === 0) {
+      // Empty array - return empty collection
+      const ctx: CollectionContext = {
+        table: this.table,
+        index: this.indexName,
+        range: keyRangeRange(undefined, undefined),
+        filter: () => false,
+        reverse: false,
+        unique: false,
+      };
+      return new Collection(ctx, this.getTransaction);
+    }
+
+    const lowerPrefixes = prefixes.map((p) => p.toLowerCase());
+
+    const ctx: CollectionContext = {
+      table: this.table,
+      index: this.indexName,
+      range: keyRangeRange(undefined, undefined),
+      filter: (item: unknown) => {
+        const value = this.getIndexValue(item);
+        if (typeof value !== 'string') return false;
+        const lowerValue = value.toLowerCase();
+        return lowerPrefixes.some((prefix) => lowerValue.startsWith(prefix));
+      },
+      reverse: false,
+      unique: false,
+    };
+
+    return new Collection(ctx, this.getTransaction);
+  }
+
+  /**
+   * Match values within any of the given ranges.
+   */
+  inAnyRange(
+    ranges: [unknown, unknown][],
+    options?: { includeLowers?: boolean; includeUppers?: boolean }
+  ): Collection<T, TKey> {
+    if (ranges.length === 0) {
+      // Empty ranges - return empty collection
+      const ctx: CollectionContext = {
+        table: this.table,
+        index: this.indexName,
+        range: keyRangeRange(undefined, undefined),
+        filter: () => false,
+        reverse: false,
+        unique: false,
+      };
+      return new Collection(ctx, this.getTransaction);
+    }
+
+    const includeLowers = options?.includeLowers ?? true;
+    const includeUppers = options?.includeUppers ?? false;
+
+    // For a single range, use between
+    if (ranges.length === 1) {
+      return this.between(ranges[0][0], ranges[0][1], includeLowers, includeUppers);
+    }
+
+    // For multiple ranges, use filter with proper key comparison
+    const ctx: CollectionContext = {
+      table: this.table,
+      index: this.indexName,
+      range: keyRangeRange(undefined, undefined),
+      filter: (item: unknown) => {
+        const value = this.getIndexValue(item);
+        return ranges.some(([lower, upper]) => {
+          // Use compareKeys for proper IndexedDB key ordering
+          const cmpLower = compareKeys(value, lower);
+          const cmpUpper = compareKeys(value, upper);
+          const aboveLower = includeLowers ? cmpLower >= 0 : cmpLower > 0;
+          const belowUpper = includeUppers ? cmpUpper <= 0 : cmpUpper < 0;
+          return aboveLower && belowUpper;
+        });
       },
       reverse: false,
       unique: false,
