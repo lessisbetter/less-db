@@ -12,7 +12,13 @@ import type {
   DBCoreKeyRange,
   DBCoreIndex,
 } from "./dbcore/index.js";
-import { keyRangeRange, keyRangeAll, primaryKeyQuery, indexQuery } from "./dbcore/index.js";
+import {
+  keyRangeRange,
+  keyRangeAll,
+  primaryKeyQuery,
+  indexQuery,
+  extractPrimaryKeys,
+} from "./dbcore/index.js";
 import { compareKeys } from "./compat/index.js";
 
 /**
@@ -175,12 +181,13 @@ export class Collection<T, TKey> {
   }
 
   /**
-   * Execute a single context query and return values with their keys.
+   * Execute a single context query and return values.
+   * Keys can be extracted from values using extractPrimaryKeys when needed.
    */
   private async _executeContext(
     ctx: CollectionContext,
     trans: DBCoreTransaction,
-  ): Promise<{ values: unknown[]; keys: unknown[] }> {
+  ): Promise<unknown[]> {
     // Only defer offset/limit to post-processing if we have filter or until
     const needsPostProcessing = !!(ctx.filter || ctx.until);
 
@@ -196,49 +203,38 @@ export class Collection<T, TKey> {
 
     const response = await ctx.table.query(request);
     let values = response.result;
-    let keys = response.keys ?? [];
 
     // Apply filter if present
     if (ctx.filter) {
-      const filtered: { value: unknown; key: unknown }[] = [];
-      for (let i = 0; i < values.length; i++) {
-        if (ctx.filter(values[i])) {
-          filtered.push({ value: values[i], key: keys[i] });
-        }
-      }
-      values = filtered.map((f) => f.value);
-      keys = filtered.map((f) => f.key);
+      values = values.filter(ctx.filter);
     }
 
     // Apply until predicate
     if (ctx.until) {
-      const truncated: { value: unknown; key: unknown }[] = [];
-      for (let i = 0; i < values.length; i++) {
-        if (ctx.until(values[i])) {
+      const truncated: unknown[] = [];
+      for (const value of values) {
+        if (ctx.until(value)) {
           if (ctx.includeStopItem) {
-            truncated.push({ value: values[i], key: keys[i] });
+            truncated.push(value);
           }
           break;
         }
-        truncated.push({ value: values[i], key: keys[i] });
+        truncated.push(value);
       }
-      values = truncated.map((t) => t.value);
-      keys = truncated.map((t) => t.key);
+      values = truncated;
     }
 
     // Apply offset and limit after filtering (only if not already applied at DB level)
     if (needsPostProcessing) {
       if (ctx.offset) {
         values = values.slice(ctx.offset);
-        keys = keys.slice(ctx.offset);
       }
       if (ctx.limit !== undefined) {
         values = values.slice(0, ctx.limit);
-        keys = keys.slice(0, ctx.limit);
       }
     }
 
-    return { values, keys };
+    return values;
   }
 
   /**
@@ -247,30 +243,32 @@ export class Collection<T, TKey> {
   async toArray(): Promise<T[]> {
     const ctx = this._ctx;
     const trans = this._getTransaction();
+    const hasOrContexts = ctx.orContexts && ctx.orContexts.length > 0;
 
     // Execute main query
-    const mainResult = await this._executeContext(ctx, trans);
-    let values = mainResult.values as T[];
-    let keys = mainResult.keys;
+    let values = (await this._executeContext(ctx, trans)) as T[];
 
     // Handle OR contexts - merge results, deduplicate by primary key
-    if (ctx.orContexts && ctx.orContexts.length > 0) {
+    if (hasOrContexts) {
       const seenKeys = new Set<string>();
+      const schema = ctx.table.schema;
 
-      // Track seen keys from main result
-      for (const key of keys) {
+      // Track seen keys from main result (extract from values)
+      const mainKeys = extractPrimaryKeys(values, schema);
+      for (const key of mainKeys) {
         seenKeys.add(JSON.stringify(key));
       }
 
       // Execute each OR context and merge
-      for (const orCtx of ctx.orContexts) {
-        const orResult = await this._executeContext(orCtx, trans);
+      for (const orCtx of ctx.orContexts!) {
+        const orValues = await this._executeContext(orCtx, trans);
+        const orKeys = extractPrimaryKeys(orValues, schema);
 
-        for (let i = 0; i < orResult.values.length; i++) {
-          const keyStr = JSON.stringify(orResult.keys[i]);
+        for (let i = 0; i < orValues.length; i++) {
+          const keyStr = JSON.stringify(orKeys[i]);
           if (!seenKeys.has(keyStr)) {
             seenKeys.add(keyStr);
-            values.push(orResult.values[i] as T);
+            values.push(orValues[i] as T);
           }
         }
       }
@@ -326,10 +324,29 @@ export class Collection<T, TKey> {
   async primaryKeys(): Promise<TKey[]> {
     const ctx = this._ctx;
     const trans = this._getTransaction();
+    const schema = ctx.table.schema;
 
-    // Execute main query
-    const mainResult = await this._executeContext(ctx, trans);
-    let keys = mainResult.keys as TKey[];
+    // For simple queries (no filter/until), we can use values: false to get keys directly
+    const hasPostFiltering = !!(ctx.filter || ctx.until);
+
+    if (!hasPostFiltering && !ctx.orContexts?.length) {
+      // Fast path: get keys directly from DB
+      const request: DBCoreQueryRequest = {
+        trans,
+        query: buildQuery(ctx),
+        values: false, // Get keys instead of values
+        limit: ctx.limit,
+        offset: ctx.offset,
+        reverse: ctx.reverse,
+        unique: ctx.unique,
+      };
+      const response = await ctx.table.query(request);
+      return response.result as TKey[];
+    }
+
+    // Complex query: get values and extract keys
+    const values = await this._executeContext(ctx, trans);
+    let keys = extractPrimaryKeys(values, schema) as TKey[];
 
     // Handle OR contexts - merge results, deduplicate
     if (ctx.orContexts && ctx.orContexts.length > 0) {
@@ -342,9 +359,10 @@ export class Collection<T, TKey> {
 
       // Execute each OR context and merge
       for (const orCtx of ctx.orContexts) {
-        const orResult = await this._executeContext(orCtx, trans);
+        const orValues = await this._executeContext(orCtx, trans);
+        const orKeys = extractPrimaryKeys(orValues, schema);
 
-        for (const key of orResult.keys) {
+        for (const key of orKeys) {
           const keyStr = JSON.stringify(key);
           if (!seenKeys.has(keyStr)) {
             seenKeys.add(keyStr);
@@ -439,50 +457,28 @@ export class Collection<T, TKey> {
   /**
    * Modify all matching items.
    * Note: Does not support OR queries. Use toArray() and manual updates instead.
+   * Note: Does not support outbound key tables (schema "++"). Use cursor iteration instead.
    */
   async modify(changes: Partial<T> | ((item: T) => void | Partial<T>)): Promise<number> {
     const ctx = this._ctx;
+    const schema = ctx.table.schema;
 
     if (ctx.orContexts && ctx.orContexts.length > 0) {
       throw new Error("modify() does not support OR queries. Use toArray() and manual updates.");
     }
 
+    // Outbound key tables can't extract keys from values
+    if (schema.primaryKey.keyPath === null) {
+      throw new Error(
+        "modify() does not support outbound key tables. " +
+          "Use cursor iteration or get the keys separately.",
+      );
+    }
+
     const trans = this._getTransaction();
 
-    // Get all matching items with their keys
-    const request: DBCoreQueryRequest = {
-      trans,
-      query: buildQuery(ctx),
-      values: true,
-      reverse: ctx.reverse,
-      unique: ctx.unique,
-    };
-
-    const response = await ctx.table.query(request);
-    let values = response.result;
-    let keys = response.keys ?? [];
-
-    // Apply filter
-    if (ctx.filter) {
-      const filtered: { value: unknown; key: unknown }[] = [];
-      for (let i = 0; i < values.length; i++) {
-        if (ctx.filter(values[i])) {
-          filtered.push({ value: values[i], key: keys[i] });
-        }
-      }
-      values = filtered.map((f) => f.value);
-      keys = filtered.map((f) => f.key);
-    }
-
-    // Apply offset and limit
-    if (ctx.offset) {
-      values = values.slice(ctx.offset);
-      keys = keys.slice(ctx.offset);
-    }
-    if (ctx.limit !== undefined) {
-      values = values.slice(0, ctx.limit);
-      keys = keys.slice(0, ctx.limit);
-    }
+    // Get all matching values using _executeContext
+    let values = await this._executeContext(ctx, trans);
 
     // Apply modifications
     const modifiedValues: unknown[] = [];
@@ -503,6 +499,9 @@ export class Collection<T, TKey> {
       modifiedValues.push(modified);
     }
 
+    // Extract keys from original values (needed for outbound key tables)
+    const keys = extractPrimaryKeys(values, schema);
+
     // Put all modified values
     if (modifiedValues.length > 0) {
       await ctx.table.mutate({
@@ -519,9 +518,11 @@ export class Collection<T, TKey> {
   /**
    * Delete all matching items.
    * Note: Does not support OR queries. Use primaryKeys() and bulkDelete() instead.
+   * Note: Filtered deletes do not support outbound key tables (schema "++").
    */
   async delete(): Promise<number> {
     const ctx = this._ctx;
+    const schema = ctx.table.schema;
 
     if (ctx.orContexts && ctx.orContexts.length > 0) {
       throw new Error("delete() does not support OR queries. Use primaryKeys() and bulkDelete().");
@@ -535,7 +536,7 @@ export class Collection<T, TKey> {
       // Count BEFORE deleting
       const count = await ctx.table.count({
         trans,
-        query: primaryKeyQuery(ctx.table.schema, ctx.range),
+        query: primaryKeyQuery(schema, ctx.range),
       });
 
       await ctx.table.mutate({
@@ -547,36 +548,18 @@ export class Collection<T, TKey> {
       return count;
     }
 
-    // Otherwise, get keys first (using same transaction), then delete them
-    const request: DBCoreQueryRequest = {
-      trans,
-      query: buildQuery(ctx),
-      values: true,
-      reverse: ctx.reverse,
-      unique: ctx.unique,
-    };
-
-    const response = await ctx.table.query(request);
-    let keys = response.keys ?? [];
-
-    // Apply filter if present
-    if (ctx.filter) {
-      const filteredKeys: unknown[] = [];
-      for (let i = 0; i < response.result.length; i++) {
-        if (ctx.filter(response.result[i])) {
-          filteredKeys.push(keys[i]);
-        }
-      }
-      keys = filteredKeys;
+    // For filtered/indexed deletes, we need to extract keys from values
+    // This doesn't work for outbound key tables
+    if (schema.primaryKey.keyPath === null) {
+      throw new Error(
+        "delete() with filter/index does not support outbound key tables. " +
+          "Use cursor iteration or get the keys separately.",
+      );
     }
 
-    // Apply offset and limit
-    if (ctx.offset) {
-      keys = keys.slice(ctx.offset);
-    }
-    if (ctx.limit !== undefined) {
-      keys = keys.slice(0, ctx.limit);
-    }
+    // Get values first and extract keys
+    const values = await this._executeContext(ctx, trans);
+    const keys = extractPrimaryKeys(values, schema);
 
     if (keys.length > 0) {
       await ctx.table.mutate({

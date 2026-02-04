@@ -151,6 +151,30 @@ describe("DBCore", () => {
         expect(result.results).toHaveLength(2);
       });
 
+      it("returns correct lastResult for auto-increment keys", async () => {
+        const trans = core.transaction(["users"], "readwrite");
+        const table = core.table("users");
+
+        // Add multiple items - lastResult should be the key of the last item in the array
+        const result = await table.mutate({
+          trans,
+          type: "add",
+          values: [
+            { name: "Alice", email: "alice@test.com", age: 30 },
+            { name: "Bob", email: "bob@test.com", age: 25 },
+            { name: "Charlie", email: "charlie@test.com", age: 35 },
+          ],
+        });
+
+        expect(result.numFailures).toBe(0);
+        expect(result.results).toHaveLength(3);
+        // lastResult should be the key of the last item (Charlie), which is results[2]
+        expect(result.lastResult).toBe(result.results![2]);
+        // Keys should be sequential for auto-increment
+        expect(result.results![2]).toBeGreaterThan(result.results![1] as number);
+        expect(result.results![1]).toBeGreaterThan(result.results![0] as number);
+      });
+
       it("reports constraint errors", async () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
@@ -214,6 +238,26 @@ describe("DBCore", () => {
         });
 
         expect(result.numFailures).toBe(0);
+      });
+
+      it("returns correct lastResult for multiple puts", async () => {
+        const trans = core.transaction(["users"], "readwrite");
+        const table = core.table("users");
+
+        const result = await table.mutate({
+          trans,
+          type: "put",
+          values: [
+            { name: "Alice", email: "alice@test.com", age: 30 },
+            { name: "Bob", email: "bob@test.com", age: 25 },
+            { name: "Charlie", email: "charlie@test.com", age: 35 },
+          ],
+        });
+
+        expect(result.numFailures).toBe(0);
+        expect(result.results).toHaveLength(3);
+        // lastResult should be the key of the last item (Charlie)
+        expect(result.lastResult).toBe(result.results![2]);
       });
 
       it("updates existing item", async () => {
@@ -456,13 +500,21 @@ describe("DBCore", () => {
       it("queries all records", async () => {
         const table = core.table("users");
 
-        const result = await table.query({
+        // Query for values
+        const valuesResult = await table.query({
           trans,
           query: primaryKeyQuery(table.schema, keyRangeAll()),
+          values: true,
         });
+        expect(valuesResult.result).toHaveLength(4);
 
-        expect(result.result).toHaveLength(4);
-        expect(result.keys).toHaveLength(4);
+        // Query for keys (values: false returns keys in result)
+        const keysResult = await table.query({
+          trans,
+          query: primaryKeyQuery(table.schema, keyRangeAll()),
+          values: false,
+        });
+        expect(keysResult.result).toHaveLength(4);
       });
 
       it("queries with equal range", async () => {
@@ -644,13 +696,21 @@ describe("DBCore", () => {
       const trans = core.transaction(["users"], "readonly");
       const table = core.table("users");
 
-      const result = await table.query({
+      // Query for values on empty table
+      const valuesResult = await table.query({
         trans,
         query: primaryKeyQuery(table.schema, keyRangeAll()),
+        values: true,
       });
+      expect(valuesResult.result).toEqual([]);
 
-      expect(result.result).toEqual([]);
-      expect(result.keys).toEqual([]);
+      // Query for keys on empty table
+      const keysResult = await table.query({
+        trans,
+        query: primaryKeyQuery(table.schema, keyRangeAll()),
+        values: false,
+      });
+      expect(keysResult.result).toEqual([]);
     });
   });
 

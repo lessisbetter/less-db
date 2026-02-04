@@ -117,12 +117,16 @@ export interface DBCoreGetManyRequest {
 
 /**
  * Query request.
+ *
+ * The `values` flag controls what is returned in `result`:
+ * - values: true (default) → result contains values (uses getAll)
+ * - values: false → result contains primary keys (uses getAllKeys)
  */
 export interface DBCoreQueryRequest {
   trans: DBCoreTransaction;
   /** Query specification (index + range) */
   query: DBCoreQuery;
-  /** Whether to return values (default: true) */
+  /** Whether to return values (true) or primary keys (false). Default: true */
   values?: boolean;
   /** Maximum number of results */
   limit?: number;
@@ -163,12 +167,13 @@ export interface DBCoreCountRequest {
 
 /**
  * Query response.
+ *
+ * The `result` array contains either values or primary keys,
+ * depending on the `values` flag in the request.
  */
 export interface DBCoreQueryResponse {
-  /** Matching values (if requested) */
+  /** Matching values (if values=true) or primary keys (if values=false) */
   result: unknown[];
-  /** Matching primary keys */
-  keys?: unknown[];
 }
 
 /**
@@ -491,4 +496,29 @@ export function indexQuery(
     return primaryKeyQuery(schema, range);
   }
   return { index, range };
+}
+
+/**
+ * Extract primary key from a value using the schema's keyPath.
+ * Returns undefined for outbound keys (keyPath is null).
+ */
+export function extractPrimaryKey(value: unknown, schema: DBCoreTableSchema): unknown {
+  const keyPath = schema.primaryKey.keyPath;
+  if (keyPath === null) {
+    // Outbound key - can't extract from value
+    return undefined;
+  }
+  return (value as Record<string, unknown>)[keyPath];
+}
+
+/**
+ * Extract primary keys from an array of values.
+ */
+export function extractPrimaryKeys(values: unknown[], schema: DBCoreTableSchema): unknown[] {
+  const keyPath = schema.primaryKey.keyPath;
+  if (keyPath === null) {
+    // Outbound keys - can't extract
+    return values.map(() => undefined);
+  }
+  return values.map((v) => (v as Record<string, unknown>)[keyPath]);
 }

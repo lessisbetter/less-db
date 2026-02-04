@@ -148,7 +148,39 @@ class IDBCoreTable implements DBCoreTable {
 
   async getMany(req: DBCoreGetManyRequest): Promise<unknown[]> {
     const store = this.getStore(req.trans);
-    return Promise.all(req.keys.map((key) => promisifyRequest(store.get(key as IDBValidKey))));
+    const keys = req.keys;
+    const length = keys.length;
+
+    if (length === 0) return [];
+
+    return new Promise((resolve, reject) => {
+      const result = new Array(length);
+      let pendingCount = 0;
+      let completedCount = 0;
+
+      const successHandler = (event: Event) => {
+        const target = event.target as IDBRequest & { _pos: number };
+        result[target._pos] = target.result;
+        if (++completedCount === pendingCount) resolve(result);
+      };
+
+      const errorHandler = (event: Event) => {
+        reject(mapError((event.target as IDBRequest).error));
+      };
+
+      for (let i = 0; i < length; i++) {
+        const key = keys[i];
+        if (key != null) {
+          const idbReq = store.get(key as IDBValidKey) as IDBRequest & { _pos: number };
+          idbReq._pos = i;
+          idbReq.onsuccess = successHandler;
+          idbReq.onerror = errorHandler;
+          pendingCount++;
+        }
+      }
+
+      if (pendingCount === 0) resolve(result);
+    });
   }
 
   async query(req: DBCoreQueryRequest): Promise<DBCoreQueryResponse> {
@@ -159,24 +191,23 @@ class IDBCoreTable implements DBCoreTable {
     const wantValues = req.values !== false;
 
     const result: unknown[] = [];
-    const keys: unknown[] = [];
 
     // Handle "any of" queries by doing multiple queries
     if (req.query.range.type === DBCoreRangeType.Any && req.query.range.values) {
       const IDBKeyRange = getIDBKeyRange();
       if (!IDBKeyRange) {
-        return { result: [], keys: [] };
+        return { result: [] };
       }
       for (const value of req.query.range.values) {
         const singleRange = IDBKeyRange.only(value);
 
-        if (this.useGetAll && !req.offset && source instanceof IDBObjectStore && wantValues) {
-          const values = await promisifyRequest(source.getAll(singleRange, req.limit));
-          const keyResult = await promisifyRequest(source.getAllKeys(singleRange, req.limit));
-          result.push(...values);
-          keys.push(...keyResult);
+        if (this.useGetAll && !req.offset) {
+          const items = wantValues
+            ? await promisifyRequest(source.getAll(singleRange, req.limit))
+            : await promisifyRequest(source.getAllKeys(singleRange, req.limit));
+          result.push(...items);
         } else {
-          await this.cursorQuery(source, singleRange, direction, req, result, keys, wantValues);
+          await this.cursorQuery(source, singleRange, direction, req, result, wantValues);
         }
 
         if (req.limit && result.length >= req.limit) {
@@ -184,10 +215,7 @@ class IDBCoreTable implements DBCoreTable {
         }
       }
 
-      return {
-        result: result.slice(0, req.limit),
-        keys: keys.slice(0, req.limit),
-      };
+      return { result: result.slice(0, req.limit) };
     }
 
     // Handle "not equal" with cursor and filter
@@ -198,32 +226,25 @@ class IDBCoreTable implements DBCoreTable {
         direction,
         req,
         result,
-        keys,
         wantValues,
         (_value, _primaryKey, indexKey) => {
           return compareKeys(indexKey, req.query.range.lower) !== 0;
         },
       );
-      return { result, keys };
+      return { result };
     }
 
-    // Standard query - use getAll only when not reversing
-    if (
-      this.useGetAll &&
-      !req.offset &&
-      !req.unique &&
-      !req.reverse &&
-      source instanceof IDBObjectStore &&
-      wantValues
-    ) {
-      const values = await promisifyRequest(source.getAll(idbRange, req.limit));
-      const keyResult = await promisifyRequest(source.getAllKeys(idbRange, req.limit));
-      return { result: values, keys: keyResult };
+    // Standard query - use getAll/getAllKeys when available
+    if (this.useGetAll && !req.offset && !req.unique && !req.reverse) {
+      const items = wantValues
+        ? await promisifyRequest(source.getAll(idbRange, req.limit))
+        : await promisifyRequest(source.getAllKeys(idbRange, req.limit));
+      return { result: items };
     }
 
     // Fall back to cursor
-    await this.cursorQuery(source, idbRange, direction, req, result, keys, wantValues);
-    return { result, keys };
+    await this.cursorQuery(source, idbRange, direction, req, result, wantValues);
+    return { result };
   }
 
   private cursorQuery(
@@ -232,7 +253,6 @@ class IDBCoreTable implements DBCoreTable {
     direction: IDBCursorDirection,
     req: DBCoreQueryRequest | DBCoreOpenCursorRequest,
     result: unknown[],
-    keys: unknown[],
     wantValues: boolean,
     filter?: (value: unknown, primaryKey: unknown, indexKey: unknown) => boolean,
   ): Promise<void> {
@@ -272,11 +292,8 @@ class IDBCoreTable implements DBCoreTable {
           return;
         }
 
-        // Collect result
-        if (wantValues) {
-          result.push(cursor.value);
-        }
-        keys.push(cursor.primaryKey);
+        // Collect result (value or primaryKey depending on wantValues)
+        result.push(wantValues ? cursor.value : cursor.primaryKey);
         collected++;
 
         // Check limit
@@ -358,12 +375,31 @@ class IDBCoreTable implements DBCoreTable {
 
     switch (req.type) {
       case "add": {
-        const results: unknown[] = [];
-        const failures: Record<number, Error> = {};
-        let numFailures = 0;
+        return new Promise((resolve) => {
+          const length = req.values.length;
+          if (length === 0) {
+            return resolve({ numFailures: 0, results: [], lastResult: undefined });
+          }
 
-        for (let i = 0; i < req.values.length; i++) {
-          try {
+          const results: unknown[] = new Array(length);
+          const failures: Record<number, Error> = {};
+          let numFailures = 0;
+          let completedCount = 0;
+          // Track the highest index that completed successfully for lastResult
+          let lastSuccessIndex = -1;
+
+          const handleComplete = () => {
+            if (++completedCount === length) {
+              resolve({
+                numFailures,
+                results,
+                failures: numFailures > 0 ? failures : undefined,
+                lastResult: lastSuccessIndex >= 0 ? results[lastSuccessIndex] : undefined,
+              });
+            }
+          };
+
+          for (let i = 0; i < length; i++) {
             let value = req.values[i];
             const key = keyPath ? undefined : req.keys?.[i];
 
@@ -371,30 +407,60 @@ class IDBCoreTable implements DBCoreTable {
               value = fixUndefinedKey(value as object, keyPath);
             }
 
-            const result = await promisifyRequest(store.add(value, key as IDBValidKey | undefined));
-            results.push(result);
-          } catch (error) {
-            failures[i] = mapError(error);
-            numFailures++;
-            results.push(undefined);
-          }
-        }
+            try {
+              const idbReq = store.add(value, key as IDBValidKey | undefined);
 
-        return {
-          numFailures,
-          results,
-          failures: numFailures > 0 ? failures : undefined,
-          lastResult: results[results.length - 1],
-        };
+              idbReq.onsuccess = () => {
+                results[i] = idbReq.result;
+                if (i > lastSuccessIndex) {
+                  lastSuccessIndex = i;
+                }
+                handleComplete();
+              };
+              idbReq.onerror = (event) => {
+                event.preventDefault(); // Prevent transaction abort
+                failures[i] = mapError(idbReq.error);
+                numFailures++;
+                results[i] = undefined;
+                handleComplete();
+              };
+            } catch (error) {
+              // Synchronous errors (e.g., readonly transaction)
+              failures[i] = mapError(error);
+              numFailures++;
+              results[i] = undefined;
+              handleComplete();
+            }
+          }
+        });
       }
 
       case "put": {
-        const results: unknown[] = [];
-        const failures: Record<number, Error> = {};
-        let numFailures = 0;
+        return new Promise((resolve) => {
+          const length = req.values.length;
+          if (length === 0) {
+            return resolve({ numFailures: 0, results: [], lastResult: undefined });
+          }
 
-        for (let i = 0; i < req.values.length; i++) {
-          try {
+          const results: unknown[] = new Array(length);
+          const failures: Record<number, Error> = {};
+          let numFailures = 0;
+          let completedCount = 0;
+          // Track the highest index that completed successfully for lastResult
+          let lastSuccessIndex = -1;
+
+          const handleComplete = () => {
+            if (++completedCount === length) {
+              resolve({
+                numFailures,
+                results,
+                failures: numFailures > 0 ? failures : undefined,
+                lastResult: lastSuccessIndex >= 0 ? results[lastSuccessIndex] : undefined,
+              });
+            }
+          };
+
+          for (let i = 0; i < length; i++) {
             let value = req.values[i];
             const key = keyPath ? undefined : req.keys?.[i];
 
@@ -402,40 +468,73 @@ class IDBCoreTable implements DBCoreTable {
               value = fixUndefinedKey(value as object, keyPath);
             }
 
-            const result = await promisifyRequest(store.put(value, key as IDBValidKey | undefined));
-            results.push(result);
-          } catch (error) {
-            failures[i] = mapError(error);
-            numFailures++;
-            results.push(undefined);
-          }
-        }
+            try {
+              const idbReq = store.put(value, key as IDBValidKey | undefined);
 
-        return {
-          numFailures,
-          results,
-          failures: numFailures > 0 ? failures : undefined,
-          lastResult: results[results.length - 1],
-        };
+              idbReq.onsuccess = () => {
+                results[i] = idbReq.result;
+                if (i > lastSuccessIndex) {
+                  lastSuccessIndex = i;
+                }
+                handleComplete();
+              };
+              idbReq.onerror = (event) => {
+                event.preventDefault();
+                failures[i] = mapError(idbReq.error);
+                numFailures++;
+                results[i] = undefined;
+                handleComplete();
+              };
+            } catch (error) {
+              // Synchronous errors (e.g., readonly transaction)
+              failures[i] = mapError(error);
+              numFailures++;
+              results[i] = undefined;
+              handleComplete();
+            }
+          }
+        });
       }
 
       case "delete": {
-        const failures: Record<number, Error> = {};
-        let numFailures = 0;
-
-        for (let i = 0; i < req.keys.length; i++) {
-          try {
-            await promisifyRequest(store.delete(req.keys[i] as IDBValidKey));
-          } catch (error) {
-            failures[i] = mapError(error);
-            numFailures++;
+        return new Promise((resolve) => {
+          const length = req.keys.length;
+          if (length === 0) {
+            return resolve({ numFailures: 0 });
           }
-        }
 
-        return {
-          numFailures,
-          failures: numFailures > 0 ? failures : undefined,
-        };
+          const failures: Record<number, Error> = {};
+          let numFailures = 0;
+          let completedCount = 0;
+
+          const handleComplete = () => {
+            if (++completedCount === length) {
+              resolve({
+                numFailures,
+                failures: numFailures > 0 ? failures : undefined,
+              });
+            }
+          };
+
+          for (let i = 0; i < length; i++) {
+            try {
+              const idbReq = store.delete(req.keys[i] as IDBValidKey);
+
+              idbReq.onsuccess = handleComplete;
+              idbReq.onerror = (event) => {
+                event.preventDefault();
+                failures[i] = mapError(idbReq.error);
+                numFailures++;
+                handleComplete();
+              };
+            } catch (error) {
+              // Synchronous errors (e.g., readonly transaction)
+              failures[i] = mapError(error);
+              numFailures++;
+              handleComplete();
+            }
+          }
+        });
       }
 
       case "deleteRange": {

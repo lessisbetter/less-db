@@ -1887,6 +1887,57 @@ describe("LessDB", () => {
     });
   });
 
+  describe("outbound key tables", () => {
+    // Outbound key tables have schema like "++" where the key is auto-generated
+    // but not stored in the object itself. This means we can't extract the
+    // primary key from values, which affects modify() and delete() operations.
+
+    interface LogEntry {
+      message: string;
+      level: string;
+    }
+
+    beforeEach(async () => {
+      db.version(1).stores({
+        logs: "++", // Outbound auto-increment key
+      });
+      await db.open();
+
+      const logs = db.table<LogEntry, number>("logs");
+      await logs.bulkAdd([
+        { message: "Info message", level: "info" },
+        { message: "Warning message", level: "warn" },
+        { message: "Error message", level: "error" },
+      ]);
+    });
+
+    it("throws on modify() for outbound key tables", async () => {
+      const logs = db.table<LogEntry, number>("logs");
+
+      await expect(logs.toCollection().modify({ level: "debug" })).rejects.toThrow(/outbound/i);
+    });
+
+    it("throws on delete() with filter for outbound key tables", async () => {
+      const logs = db.table<LogEntry, number>("logs");
+
+      // delete() with filter needs to extract keys from values
+      await expect(
+        logs
+          .toCollection()
+          .filter((log) => log.level === "error")
+          .delete(),
+      ).rejects.toThrow(/outbound/i);
+    });
+
+    it("allows delete() without filter on outbound key tables", async () => {
+      const logs = db.table<LogEntry, number>("logs");
+
+      // delete() without filter uses deleteRange which doesn't need keys
+      const deleted = await logs.toCollection().delete();
+      expect(deleted).toBe(3);
+    });
+  });
+
   describe("WhereClause edge cases", () => {
     beforeEach(async () => {
       db.version(1).stores({
