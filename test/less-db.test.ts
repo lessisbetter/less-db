@@ -3114,4 +3114,725 @@ describe("LessDB", () => {
       expect(results2.some((u) => u.name === "Alice")).toBe(true);
     });
   });
+
+  describe("Case-insensitive cursor jumping algorithm", () => {
+    interface Item {
+      id?: number;
+      name: string;
+    }
+
+    beforeEach(async () => {
+      db.version(1).stores({
+        items: "++id, name",
+      });
+      await db.open();
+    });
+
+    describe("equalsIgnoreCase edge cases", () => {
+      it("finds all case variations of a word", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+          { name: "HeLLo" },
+          { name: "hELLO" },
+          { name: "world" }, // non-match
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(5);
+        expect(results.every((r) => r.name.toLowerCase() === "hello")).toBe(true);
+      });
+
+      it("handles single character strings", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "a" },
+          { name: "A" },
+          { name: "b" },
+          { name: "B" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("a").toArray();
+
+        expect(results).toHaveLength(2);
+        expect(results.map((r) => r.name).sort()).toEqual(["A", "a"]);
+      });
+
+      it("handles strings at index boundaries", async () => {
+        const items = db.table<Item, number>("items");
+        // Add strings that sort at beginning and end of range
+        await items.bulkAdd([
+          { name: "AAA" }, // beginning of uppercase range
+          { name: "aaa" }, // end of lowercase range
+          { name: "Aaa" }, // mixed
+          { name: "aaA" }, // mixed
+          { name: "ZZZ" }, // outside range
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("aaa").toArray();
+
+        expect(results).toHaveLength(4);
+        expect(results.every((r) => r.name.toLowerCase() === "aaa")).toBe(true);
+      });
+
+      it("returns empty array when no matches exist", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "apple" },
+          { name: "banana" },
+          { name: "cherry" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("orange").toArray();
+
+        expect(results).toHaveLength(0);
+      });
+
+      it("handles strings with numbers", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "user1" },
+          { name: "USER1" },
+          { name: "User1" },
+          { name: "user2" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("user1").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.every((r) => r.name.toLowerCase() === "user1")).toBe(true);
+      });
+
+      it("handles strings with special characters", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello-world" },
+          { name: "HELLO-WORLD" },
+          { name: "Hello-World" },
+          { name: "hello_world" }, // different separator
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello-world").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.every((r) => r.name.toLowerCase() === "hello-world")).toBe(true);
+      });
+
+      it("handles strings with spaces", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello world" },
+          { name: "HELLO WORLD" },
+          { name: "Hello World" },
+          { name: "helloworld" }, // no space
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello world").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.every((r) => r.name.toLowerCase() === "hello world")).toBe(true);
+      });
+
+      it("handles very long strings", async () => {
+        const items = db.table<Item, number>("items");
+        const longString = "a".repeat(100);
+        await items.bulkAdd([
+          { name: longString },
+          { name: longString.toUpperCase() },
+          { name: longString.slice(0, 50) + longString.slice(50).toUpperCase() },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase(longString).toArray();
+
+        expect(results).toHaveLength(3);
+      });
+
+      it("correctly skips non-matching entries in the range", async () => {
+        const items = db.table<Item, number>("items");
+        // Add many items that fall within the key range but don't match
+        const nonMatching = [];
+        for (let i = 0; i < 100; i++) {
+          nonMatching.push({ name: `Hfoo${i}` }); // starts with H but doesn't match "hello"
+          nonMatching.push({ name: `hbar${i}` }); // starts with h but doesn't match "hello"
+        }
+        await items.bulkAdd([
+          ...nonMatching,
+          { name: "hello" },
+          { name: "HELLO" },
+          { name: "HeLLo" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.every((r) => r.name.toLowerCase() === "hello")).toBe(true);
+      });
+
+      it("works with limit", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+          { name: "HeLLo" },
+          { name: "hELLO" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").limit(2).toArray();
+
+        expect(results).toHaveLength(2);
+        expect(results.every((r) => r.name.toLowerCase() === "hello")).toBe(true);
+      });
+
+      it("works with offset", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+        ]);
+
+        const allResults = await items.where("name").equalsIgnoreCase("hello").toArray();
+        const offsetResults = await items
+          .where("name")
+          .equalsIgnoreCase("hello")
+          .offset(1)
+          .toArray();
+
+        expect(offsetResults).toHaveLength(allResults.length - 1);
+      });
+
+      it("works with count", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+          { name: "world" },
+        ]);
+
+        const count = await items.where("name").equalsIgnoreCase("hello").count();
+
+        expect(count).toBe(3);
+      });
+
+      it("works with first", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+        ]);
+
+        const first = await items.where("name").equalsIgnoreCase("hello").first();
+
+        expect(first).toBeDefined();
+        expect(first!.name.toLowerCase()).toBe("hello");
+      });
+
+      it("works with primaryKeys", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+          { name: "world" },
+        ]);
+
+        const keys = await items.where("name").equalsIgnoreCase("hello").primaryKeys();
+
+        expect(keys).toHaveLength(3);
+      });
+    });
+
+    describe("startsWithIgnoreCase edge cases", () => {
+      it("finds all case variations of prefix", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello World" },
+          { name: "HELLO there" },
+          { name: "HeLLo123" },
+          { name: "world" }, // non-match
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(4);
+        expect(results.every((r) => r.name.toLowerCase().startsWith("hello"))).toBe(true);
+      });
+
+      it("handles single character prefix", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "apple" },
+          { name: "Ant" },
+          { name: "AMAZING" },
+          { name: "banana" },
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("a").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.every((r) => r.name.toLowerCase().startsWith("a"))).toBe(true);
+      });
+
+      it("handles prefix that matches entire string", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "test" },
+          { name: "TEST" },
+          { name: "Test" },
+          { name: "testing" }, // longer
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("test").toArray();
+
+        expect(results).toHaveLength(4);
+      });
+
+      it("handles prefix longer than some strings", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hi" }, // shorter than prefix
+          { name: "hello" },
+          { name: "HELLO WORLD" },
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(2);
+        expect(results.every((r) => r.name.toLowerCase().startsWith("hello"))).toBe(true);
+      });
+
+      it("correctly skips non-matching entries", async () => {
+        const items = db.table<Item, number>("items");
+        // Add items that start with same letter but different prefix
+        await items.bulkAdd([
+          { name: "Habc" },
+          { name: "Hdef" },
+          { name: "Hello" },
+          { name: "HELLO WORLD" },
+          { name: "Hxyz" },
+          { name: "hzzz" },
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(2);
+      });
+
+      it("works with limit", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello1" },
+          { name: "Hello2" },
+          { name: "HELLO3" },
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("hello").limit(2).toArray();
+
+        expect(results).toHaveLength(2);
+      });
+    });
+
+    describe("anyOfIgnoreCase edge cases", () => {
+      it("finds all case variations of multiple values", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "alice" },
+          { name: "ALICE" },
+          { name: "bob" },
+          { name: "BOB" },
+          { name: "charlie" }, // non-match
+        ]);
+
+        const results = await items.where("name").anyOfIgnoreCase(["alice", "bob"]).toArray();
+
+        expect(results).toHaveLength(4);
+      });
+
+      it("handles single value (should use equalsIgnoreCase path)", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "test" },
+          { name: "TEST" },
+          { name: "Test" },
+        ]);
+
+        const results = await items.where("name").anyOfIgnoreCase(["test"]).toArray();
+
+        expect(results).toHaveLength(3);
+      });
+
+      it("handles values with different lengths", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "a" },
+          { name: "A" },
+          { name: "abc" },
+          { name: "ABC" },
+          { name: "abcdef" },
+          { name: "ABCDEF" },
+        ]);
+
+        const results = await items.where("name").anyOfIgnoreCase(["a", "abc", "abcdef"]).toArray();
+
+        expect(results).toHaveLength(6);
+      });
+
+      it("handles overlapping value ranges", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "apple" },
+          { name: "APPLE" },
+          { name: "apricot" },
+          { name: "APRICOT" },
+          { name: "avocado" },
+        ]);
+
+        const results = await items
+          .where("name")
+          .anyOfIgnoreCase(["apple", "apricot"])
+          .toArray();
+
+        expect(results).toHaveLength(4);
+      });
+
+      it("returns empty for no matches", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "apple" },
+          { name: "banana" },
+        ]);
+
+        const results = await items.where("name").anyOfIgnoreCase(["cherry", "date"]).toArray();
+
+        expect(results).toHaveLength(0);
+      });
+
+      it("works with many values", async () => {
+        const items = db.table<Item, number>("items");
+        const names = ["alpha", "beta", "gamma", "delta", "epsilon"];
+        await items.bulkAdd(
+          names.flatMap((n) => [{ name: n }, { name: n.toUpperCase() }, { name: n[0]!.toUpperCase() + n.slice(1) }]),
+        );
+
+        const results = await items.where("name").anyOfIgnoreCase(names).toArray();
+
+        expect(results).toHaveLength(15); // 5 names x 3 variations each
+      });
+    });
+
+    describe("cursor algorithm with filter chaining", () => {
+      it("equalsIgnoreCase with additional filter", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+        ]);
+
+        // The cursor algorithm should work, then filter is applied post-hoc
+        const results = await items
+          .where("name")
+          .equalsIgnoreCase("hello")
+          .filter((item) => item.name === item.name.toUpperCase())
+          .toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]!.name).toBe("HELLO");
+      });
+
+      it("startsWithIgnoreCase with additional filter", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello world" },
+          { name: "Hello There" },
+          { name: "HELLO UNIVERSE" },
+        ]);
+
+        const results = await items
+          .where("name")
+          .startsWithIgnoreCase("hello")
+          .filter((item) => item.name.includes("world"))
+          .toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]!.name).toBe("hello world");
+      });
+    });
+
+    describe("cursor algorithm with modify and delete", () => {
+      it("equalsIgnoreCase with modify", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+          { name: "world" },
+        ]);
+
+        const count = await items.where("name").equalsIgnoreCase("hello").modify({ name: "updated" });
+
+        expect(count).toBe(3);
+
+        const all = await items.toArray();
+        expect(all.filter((i) => i.name === "updated")).toHaveLength(3);
+        expect(all.filter((i) => i.name === "world")).toHaveLength(1);
+      });
+
+      it("equalsIgnoreCase with delete", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "Hello" },
+          { name: "HELLO" },
+          { name: "world" },
+        ]);
+
+        const count = await items.where("name").equalsIgnoreCase("hello").delete();
+
+        expect(count).toBe(3);
+
+        const remaining = await items.toArray();
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0]!.name).toBe("world");
+      });
+    });
+
+    describe("cursor algorithm stress tests", () => {
+      it("handles large dataset with sparse matches", async () => {
+        const items = db.table<Item, number>("items");
+
+        // Create 1000 items with only 3 matching "target"
+        const data: Item[] = [];
+        for (let i = 0; i < 500; i++) {
+          data.push({ name: `item${i}` });
+        }
+        data.push({ name: "target" });
+        data.push({ name: "TARGET" });
+        data.push({ name: "Target" });
+        for (let i = 500; i < 1000; i++) {
+          data.push({ name: `item${i}` });
+        }
+
+        await items.bulkAdd(data);
+
+        const results = await items.where("name").equalsIgnoreCase("target").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.every((r) => r.name.toLowerCase() === "target")).toBe(true);
+      });
+
+      it("handles large dataset with many matches", async () => {
+        const items = db.table<Item, number>("items");
+
+        // Create items with many case variations
+        const data: Item[] = [];
+        const word = "test";
+        // Generate all 16 case combinations of "test"
+        for (let mask = 0; mask < 16; mask++) {
+          let variation = "";
+          for (let i = 0; i < 4; i++) {
+            const char = word[i]!;
+            variation += mask & (1 << i) ? char.toUpperCase() : char;
+          }
+          data.push({ name: variation });
+        }
+        // Add some non-matching items
+        for (let i = 0; i < 100; i++) {
+          data.push({ name: `other${i}` });
+        }
+
+        await items.bulkAdd(data);
+
+        const results = await items.where("name").equalsIgnoreCase("test").toArray();
+
+        expect(results).toHaveLength(16);
+      });
+    });
+
+    describe("cursor algorithm boundary conditions", () => {
+      it("handles string that is exactly the lower bound (uppercase)", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "HELLO" }, // exactly the lower bound
+          { name: "hello" },
+          { name: "Hello" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.some((r) => r.name === "HELLO")).toBe(true);
+      });
+
+      it("handles string that is exactly the upper bound (lowercase)", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "HELLO" },
+          { name: "hello" }, // exactly the upper bound
+          { name: "Hello" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(3);
+        expect(results.some((r) => r.name === "hello")).toBe(true);
+      });
+
+      it("handles only uppercase match", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "HELLO" },
+          { name: "world" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]!.name).toBe("HELLO");
+      });
+
+      it("handles only lowercase match", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "hello" },
+          { name: "WORLD" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]!.name).toBe("hello");
+      });
+
+      it("handles alternating case pattern", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "HeLLo" },
+          { name: "hElLo" },
+          { name: "hELLo" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(3);
+      });
+
+      it("handles adjacent non-matching strings", async () => {
+        const items = db.table<Item, number>("items");
+        // Strings that are close in sort order but don't match
+        await items.bulkAdd([
+          { name: "HELLM" }, // before HELLO
+          { name: "HELLN" }, // before HELLO
+          { name: "HELLO" }, // match
+          { name: "HELLP" }, // after HELLO
+          { name: "HELLQ" }, // after HELLO
+          { name: "hello" }, // match
+          { name: "hellp" }, // after hello
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(2);
+        expect(results.every((r) => r.name.toLowerCase() === "hello")).toBe(true);
+      });
+
+      it("handles strings with same prefix but different length", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "HELL" }, // shorter
+          { name: "HELLO" }, // match
+          { name: "HELLOWORLD" }, // longer
+          { name: "hello" }, // match
+          { name: "helloworld" }, // longer
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(2);
+        expect(results.every((r) => r.name.toLowerCase() === "hello")).toBe(true);
+      });
+
+      it("handles repeated characters with case variations", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "aaa" },
+          { name: "AAA" },
+          { name: "AaA" },
+          { name: "aAa" },
+          { name: "aaA" },
+          { name: "Aaa" },
+          { name: "AAa" },
+          { name: "aAA" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("aaa").toArray();
+
+        expect(results).toHaveLength(8);
+      });
+
+      it("handles unicode letters with case", async () => {
+        const items = db.table<Item, number>("items");
+        // Note: JavaScript's toUpperCase/toLowerCase handle some unicode
+        await items.bulkAdd([
+          { name: "café" },
+          { name: "CAFÉ" },
+          { name: "Café" },
+        ]);
+
+        const results = await items.where("name").equalsIgnoreCase("café").toArray();
+
+        expect(results).toHaveLength(3);
+      });
+    });
+
+    describe("startsWithIgnoreCase boundary conditions", () => {
+      it("finds prefix at lower bound", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "HELLO world" },
+          { name: "Hello there" },
+          { name: "hello you" },
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(3);
+      });
+
+      it("correctly excludes similar but non-matching prefixes", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "HELP me" }, // different word
+          { name: "HELLO world" }, // match
+          { name: "HELM of ship" }, // different word
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("hello").toArray();
+
+        expect(results).toHaveLength(1);
+        expect(results[0]!.name).toBe("HELLO world");
+      });
+
+      it("handles prefix that spans the entire string", async () => {
+        const items = db.table<Item, number>("items");
+        await items.bulkAdd([
+          { name: "cat" },
+          { name: "CAT" },
+          { name: "Cat" },
+          { name: "category" }, // longer
+        ]);
+
+        const results = await items.where("name").startsWithIgnoreCase("cat").toArray();
+
+        expect(results).toHaveLength(4);
+      });
+    });
+  });
 });

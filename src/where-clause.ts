@@ -15,6 +15,11 @@ import {
 } from "./dbcore/index.js";
 import { Collection, type CollectionContext } from "./collection.js";
 import { compareKeys } from "./compat/index.js";
+import {
+  createEqualsIgnoreCaseAlgorithm,
+  createStartsWithIgnoreCaseAlgorithm,
+  createAnyOfIgnoreCaseAlgorithm,
+} from "./ignore-case-helpers.js";
 
 /**
  * WhereClause for building index queries.
@@ -190,31 +195,22 @@ export class WhereClause<T, TKey> {
 
   /**
    * Match strings that start with the given prefix (case-insensitive).
+   * Uses cursor jumping algorithm for efficient iteration.
    */
   startsWithIgnoreCase(prefix: string): Collection<T, TKey> {
     if (prefix === "") {
       return this.toCollection(keyRangeAll());
     }
 
-    const lowerPrefix = prefix.toLowerCase();
-    const upperPrefix = prefix.toUpperCase();
+    // Use the optimized cursor-jumping algorithm
+    const { algorithm, lowerBound, upperBound } = createStartsWithIgnoreCaseAlgorithm(prefix);
 
-    // Optimize: Use a range query to reduce scanned keys
-    // In IndexedDB, uppercase sorts before lowercase: "A"..."Z" < "a"..."z"
-    // So for "abc", we query from "ABC" to "abcz" to catch all case variations
-    const lowerBound = upperPrefix;
-    const upperChar = lowerPrefix.charAt(lowerPrefix.length - 1);
-    const upperBound = lowerPrefix.slice(0, -1) + String.fromCharCode(upperChar.charCodeAt(0) + 1);
-
+    // Range is inclusive on both ends to ensure all case variations are included
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(lowerBound, upperBound, false, true),
-      filter: (item: unknown) => {
-        const value = this.getIndexValue(item);
-        if (typeof value !== "string") return false;
-        return value.toLowerCase().startsWith(lowerPrefix);
-      },
+      range: keyRangeRange(lowerBound, upperBound, false, false),
+      cursorAlgorithm: algorithm,
       reverse: false,
       unique: false,
     };
@@ -224,31 +220,23 @@ export class WhereClause<T, TKey> {
 
   /**
    * Match strings that equal the given value (case-insensitive).
+   * Uses cursor jumping algorithm for efficient iteration.
    */
   equalsIgnoreCase(value: string): Collection<T, TKey> {
     if (value === "") {
       return this.equals("");
     }
 
-    const lowerValue = value.toLowerCase();
-    const upperValue = value.toUpperCase();
+    // Use the optimized cursor-jumping algorithm
+    const { algorithm, lowerBound, upperBound } = createEqualsIgnoreCaseAlgorithm(value);
 
-    // Optimize: Use a range query to limit scanned keys
-    // Query from uppercase version to lowercase version + next char
-    // This covers all case variations (e.g., "ABC" to "abcz" for "abc")
-    const lowerBound = upperValue;
-    const lastChar = lowerValue.charAt(lowerValue.length - 1);
-    const upperBound = lowerValue.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
-
+    // Range is inclusive on both ends - lowerBound is uppercase, upperBound is lowercase
+    // This ensures all case variations are included (e.g., [HELLO, hello] for "hello")
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(lowerBound, upperBound, false, true),
-      filter: (item: unknown) => {
-        const itemValue = this.getIndexValue(item);
-        if (typeof itemValue !== "string") return false;
-        return itemValue.toLowerCase() === lowerValue;
-      },
+      range: keyRangeRange(lowerBound, upperBound, false, false),
+      cursorAlgorithm: algorithm,
       reverse: false,
       unique: false,
     };
@@ -258,6 +246,7 @@ export class WhereClause<T, TKey> {
 
   /**
    * Match any of the given values (case-insensitive).
+   * Uses cursor jumping algorithm for efficient iteration.
    */
   anyOfIgnoreCase(values: string[]): Collection<T, TKey> {
     if (values.length === 0) {
@@ -278,14 +267,10 @@ export class WhereClause<T, TKey> {
       return this.equalsIgnoreCase(values[0] as string);
     }
 
-    // For multiple values, create a Set for fast lookup with optimized range
-    const lowerValues = new Set(values.map((v) => v.toLowerCase()));
-
-    // Calculate range bounds from all values to narrow scan
-    // Empty strings can't be bounded with character ranges, so if present, use full scan
+    // Empty strings can't use cursor jumping - fall back to filter
     const hasEmpty = values.some((v) => v === "");
     if (hasEmpty) {
-      // Can't optimize with ranges when empty strings are included
+      const lowerValues = new Set(values.map((v) => v.toLowerCase()));
       const ctx: CollectionContext = {
         table: this.table,
         index: this.indexName,
@@ -301,22 +286,15 @@ export class WhereClause<T, TKey> {
       return new Collection(ctx, this.getTransaction);
     }
 
-    const allUpper = values.map((v) => v.toUpperCase()).sort();
-    const allLower = values.map((v) => v.toLowerCase()).sort();
-    const minBound = allUpper[0] as string;
-    const maxValue = allLower[allLower.length - 1] as string;
-    const lastChar = maxValue.charAt(maxValue.length - 1);
-    const maxBound = maxValue.slice(0, -1) + String.fromCharCode(lastChar.charCodeAt(0) + 1);
+    // Use the optimized cursor-jumping algorithm
+    const { algorithm, lowerBound, upperBound } = createAnyOfIgnoreCaseAlgorithm(values);
 
+    // Range is inclusive on both ends to ensure all case variations are included
     const ctx: CollectionContext = {
       table: this.table,
       index: this.indexName,
-      range: keyRangeRange(minBound, maxBound, false, true),
-      filter: (item: unknown) => {
-        const itemValue = this.getIndexValue(item);
-        if (typeof itemValue !== "string") return false;
-        return lowerValues.has(itemValue.toLowerCase());
-      },
+      range: keyRangeRange(lowerBound, upperBound, false, false),
+      cursorAlgorithm: algorithm,
       reverse: false,
       unique: false,
     };

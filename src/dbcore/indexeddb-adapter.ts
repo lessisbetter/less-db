@@ -32,6 +32,7 @@ import {
   type DBCoreCursor,
   type InternalTransaction,
   type TransactionMode,
+  type CursorAlgorithm,
   DBCoreRangeType,
   toDBCoreTableSchema,
 } from "./types.js";
@@ -246,6 +247,20 @@ class IDBCoreTable implements DBCoreTable {
       return { result };
     }
 
+    // If cursorAlgorithm is provided, use cursor-based iteration with jumping
+    if (req.cursorAlgorithm) {
+      await this.cursorQueryWithAlgorithm(
+        source,
+        idbRange,
+        direction,
+        req,
+        result,
+        wantValues,
+        req.cursorAlgorithm,
+      );
+      return { result };
+    }
+
     // Standard query - use getAll/getAllKeys when available
     if (this.useGetAll && !req.offset && !req.unique && !req.reverse) {
       const items = wantValues
@@ -297,6 +312,84 @@ class IDBCoreTable implements DBCoreTable {
           return;
         }
 
+        // Handle offset
+        if (skipped < offset) {
+          skipped++;
+          cursor.continue();
+          return;
+        }
+
+        // Collect result (value or primaryKey depending on wantValues)
+        result.push(wantValues ? cursor.value : cursor.primaryKey);
+        collected++;
+
+        // Check limit
+        if (collected >= limit) {
+          resolve();
+          return;
+        }
+
+        cursor.continue();
+      };
+
+      cursorRequest.onerror = () => reject(mapError(cursorRequest.error));
+    });
+  }
+
+  /**
+   * Cursor query with algorithm-based iteration and cursor jumping.
+   * The algorithm can return:
+   * - true: include this record
+   * - false: skip this record (continue to next)
+   * - string: jump cursor to this key
+   * - null: stop iteration
+   */
+  private cursorQueryWithAlgorithm(
+    source: IDBObjectStore | IDBIndex,
+    range: IDBKeyRange | undefined,
+    direction: IDBCursorDirection,
+    req: DBCoreQueryRequest,
+    result: unknown[],
+    wantValues: boolean,
+    algorithm: CursorAlgorithm,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const cursorRequest = source.openCursor(range, direction);
+      let skipped = 0;
+      let collected = 0;
+      const limit = req.limit ?? Infinity;
+      const offset = req.offset ?? 0;
+
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+
+        if (!cursor) {
+          resolve();
+          return;
+        }
+
+        // Run the algorithm
+        const algorithmResult = algorithm(cursor.key, cursor.value, cursor.primaryKey);
+
+        // null means stop iteration
+        if (algorithmResult === null) {
+          resolve();
+          return;
+        }
+
+        // string means jump to this key
+        if (typeof algorithmResult === "string") {
+          cursor.continue(algorithmResult as IDBValidKey);
+          return;
+        }
+
+        // false means skip this record
+        if (algorithmResult === false) {
+          cursor.continue();
+          return;
+        }
+
+        // true means include this record
         // Handle offset
         if (skipped < offset) {
           skipped++;

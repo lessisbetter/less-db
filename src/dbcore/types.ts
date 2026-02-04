@@ -116,6 +116,30 @@ export interface DBCoreGetManyRequest {
 }
 
 /**
+ * Cursor algorithm result.
+ * - true: include this record
+ * - false: skip this record
+ * - string: jump cursor to this key (for efficient case-insensitive queries)
+ * - null: stop iteration
+ */
+export type CursorAlgorithmResult = boolean | string | null;
+
+/**
+ * Cursor algorithm function for custom iteration logic.
+ * Called for each cursor position to determine whether to include, skip, or jump.
+ *
+ * @param key - The index key at current cursor position
+ * @param value - The value at current cursor position (if values=true)
+ * @param primaryKey - The primary key at current cursor position
+ * @returns Result indicating how to proceed
+ */
+export type CursorAlgorithm = (
+  key: unknown,
+  value: unknown,
+  primaryKey: unknown,
+) => CursorAlgorithmResult;
+
+/**
  * Query request.
  *
  * The `values` flag controls what is returned in `result`:
@@ -136,6 +160,11 @@ export interface DBCoreQueryRequest {
   reverse?: boolean;
   /** Only return unique keys (for non-unique indexes) */
   unique?: boolean;
+  /**
+   * Custom cursor algorithm for advanced filtering with cursor jumping.
+   * When provided, forces cursor-based iteration instead of getAll.
+   */
+  cursorAlgorithm?: CursorAlgorithm;
 }
 
 /**

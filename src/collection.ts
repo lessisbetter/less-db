@@ -11,6 +11,7 @@ import type {
   DBCoreQueryRequest,
   DBCoreKeyRange,
   DBCoreIndex,
+  CursorAlgorithm,
 } from "./dbcore/index.js";
 import {
   keyRangeRange,
@@ -50,6 +51,8 @@ export interface CollectionContext {
   raw?: boolean;
   /** Alternative query contexts for OR operations */
   orContexts?: CollectionContext[];
+  /** Cursor algorithm for optimized iteration with jumping */
+  cursorAlgorithm?: CursorAlgorithm;
 }
 
 /**
@@ -190,6 +193,7 @@ export class Collection<T, TKey> {
     trans: DBCoreTransaction,
   ): Promise<unknown[]> {
     // Only defer offset/limit to post-processing if we have filter or until
+    // Note: cursorAlgorithm handles its own filtering, so no post-filter needed
     const needsPostProcessing = !!(ctx.filter || ctx.until);
 
     const request: DBCoreQueryRequest = {
@@ -200,12 +204,13 @@ export class Collection<T, TKey> {
       offset: needsPostProcessing ? undefined : ctx.offset,
       reverse: ctx.reverse,
       unique: ctx.unique,
+      cursorAlgorithm: ctx.cursorAlgorithm,
     };
 
     const response = await ctx.table.query(request);
     let values = response.result;
 
-    // Apply filter if present
+    // Apply filter if present (not needed when using cursorAlgorithm)
     if (ctx.filter) {
       values = values.filter(ctx.filter);
     }
