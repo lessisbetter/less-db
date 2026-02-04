@@ -9,34 +9,34 @@ import {
   diffSchemas,
   type DatabaseSchema,
   type TableSchema,
-} from './schema-parser.js';
+} from "./schema-parser.js";
 import {
   type DBCore,
   type DBCoreTransaction,
   type TransactionMode,
   createIDBCore,
-} from './dbcore/index.js';
-import { Table, createTable } from './table.js';
+} from "./dbcore/index.js";
+import { Table, createTable } from "./table.js";
 import {
   executeTransaction,
   TransactionContext,
   type TransactionState,
   type TxMode,
-} from './transaction.js';
+} from "./transaction.js";
 import {
   EventEmitter,
   createTableHooks,
   type TableHooks,
   type DatabaseEvents,
-} from './events/index.js';
+} from "./events/index.js";
 import {
   MissingAPIError,
   InvalidStateError,
   SchemaError,
   BlockedError,
   mapError,
-} from './errors/index.js';
-import { getIndexedDB, fixOldVersion } from './compat/index.js';
+} from "./errors/index.js";
+import { getIndexedDB, fixOldVersion } from "./compat/index.js";
 
 /**
  * Version definition for schema migrations.
@@ -140,7 +140,7 @@ export class LessDB {
         // The cast is safe because the Proxy actually provides both interfaces at runtime
         return new Proxy(db as object, {
           get(target, prop, receiver) {
-            if (prop === 'upgrade') {
+            if (prop === "upgrade") {
               return (fn: (tx: TransactionContext) => Promise<void> | void) => {
                 const v = db.versions.find((v) => v.version === versionNumber);
                 if (v) {
@@ -151,7 +151,9 @@ export class LessDB {
             }
             return Reflect.get(target, prop, receiver);
           },
-        }) as LessDB & { upgrade: (fn: (tx: TransactionContext) => Promise<void> | void) => LessDB };
+        }) as LessDB & {
+          upgrade: (fn: (tx: TransactionContext) => Promise<void> | void) => LessDB;
+        };
       },
     };
   }
@@ -188,16 +190,16 @@ export class LessDB {
   private async doOpen(): Promise<void> {
     const indexedDB = getIndexedDB();
     if (!indexedDB) {
-      throw new MissingAPIError('IndexedDB is not available');
+      throw new MissingAPIError("IndexedDB is not available");
     }
 
     if (this.versions.length === 0) {
-      throw new SchemaError('No schema versions defined. Call version().stores() first.');
+      throw new SchemaError("No schema versions defined. Call version().stores() first.");
     }
 
     // Sort versions
     this.versions.sort((a, b) => a.version - b.version);
-    const latestVersion = this.versions[this.versions.length - 1].version;
+    const latestVersion = this.getLatestVersionNumber();
 
     return new Promise<void>((resolve, reject) => {
       const request = indexedDB.open(this.name, latestVersion);
@@ -206,9 +208,9 @@ export class LessDB {
         const error = request.error;
 
         // Chrome UnknownError workaround - retry a few times
-        if (error?.name === 'UnknownError' && this.openRetryCount > 0) {
+        if (error?.name === "UnknownError" && this.openRetryCount > 0) {
           this.openRetryCount--;
-          console.warn('LessDB: Retrying open() after UnknownError');
+          console.warn("LessDB: Retrying open() after UnknownError");
           this.doOpen().then(resolve, reject);
           return;
         }
@@ -217,13 +219,17 @@ export class LessDB {
       };
 
       request.onblocked = (event) => {
-        this.events.emit('blocked', event);
-        reject(new BlockedError('Database blocked by another connection'));
+        this.events.emit("blocked", event);
+        reject(new BlockedError("Database blocked by another connection"));
       };
 
       request.onupgradeneeded = (event) => {
         const db = request.result;
-        const transaction = request.transaction!;
+        const transaction = request.transaction;
+        if (!transaction) {
+          reject(new InvalidStateError("No transaction available during upgrade"));
+          return;
+        }
         const oldVersion = fixOldVersion(event.oldVersion);
 
         this.handleUpgrade(db, transaction, oldVersion, latestVersion).catch((error) => {
@@ -237,14 +243,14 @@ export class LessDB {
 
         // Set up event handlers
         db.onversionchange = (event) => {
-          this.events.emit('versionchange', event);
+          this.events.emit("versionchange", event);
         };
 
         db.onclose = () => {
           this.state.isOpen = false;
           this.state.idbDatabase = undefined;
           this.state.core = undefined;
-          this.events.emit('close');
+          this.events.emit("close");
         };
 
         // Initialize state
@@ -255,7 +261,7 @@ export class LessDB {
         // Create table proxies
         this.setupTableProxies();
 
-        this.events.emit('ready');
+        this.events.emit("ready");
         resolve();
       };
     });
@@ -268,7 +274,7 @@ export class LessDB {
     db: IDBDatabase,
     transaction: IDBTransaction,
     oldVersion: number,
-    newVersion: number
+    newVersion: number,
   ): Promise<void> {
     // Build schema for each version
     let currentSchema: DatabaseSchema = {};
@@ -291,8 +297,11 @@ export class LessDB {
       // Apply schema changes
       for (const change of changes) {
         switch (change.type) {
-          case 'add-table': {
+          case "add-table": {
             const tableSchema = newSchema[change.tableName];
+            if (!tableSchema) {
+              throw new SchemaError(`Missing schema for table "${change.tableName}"`);
+            }
             const storeOptions: IDBObjectStoreParameters = {};
 
             if (tableSchema.primaryKey.keyPath) {
@@ -306,33 +315,41 @@ export class LessDB {
 
             // Create indexes
             for (const idx of tableSchema.indexes) {
-              store.createIndex(idx.name, idx.keyPath!, { unique: idx.unique });
+              if (idx.keyPath) {
+                store.createIndex(idx.name, idx.keyPath, { unique: idx.unique });
+              }
             }
             break;
           }
 
-          case 'delete-table':
+          case "delete-table":
             db.deleteObjectStore(change.tableName);
             break;
 
-          case 'add-index': {
+          case "add-index": {
+            if (!change.indexName || !change.spec?.keyPath) {
+              throw new SchemaError(`Invalid add-index change for table "${change.tableName}"`);
+            }
             const store = transaction.objectStore(change.tableName);
-            store.createIndex(change.indexName!, change.spec!.keyPath!, {
-              unique: change.spec!.unique,
+            store.createIndex(change.indexName, change.spec.keyPath, {
+              unique: change.spec.unique,
             });
             break;
           }
 
-          case 'delete-index': {
+          case "delete-index": {
+            if (!change.indexName) {
+              throw new SchemaError(`Invalid delete-index change for table "${change.tableName}"`);
+            }
             const store = transaction.objectStore(change.tableName);
-            store.deleteIndex(change.indexName!);
+            store.deleteIndex(change.indexName);
             break;
           }
 
-          case 'change-primary-key':
+          case "change-primary-key":
             throw new SchemaError(
               `Cannot change primary key of table "${change.tableName}". ` +
-                'Delete and recreate the table instead.'
+                "Delete and recreate the table instead.",
             );
         }
       }
@@ -343,7 +360,7 @@ export class LessDB {
         const tempCore = createIDBCore(db, this.state.schemas);
         const state: TransactionState = {
           coreTrans: {
-            mode: 'readwrite',
+            mode: "readwrite",
             tables: Array.from(this.state.schemas.keys()),
             idbTransaction: transaction,
             abort: () => transaction.abort(),
@@ -354,11 +371,7 @@ export class LessDB {
         };
 
         const txContext = new TransactionContext(state, (name, state) =>
-          createTable(
-            tempCore.table(name),
-            () => state.coreTrans,
-            this.getTableHooks(name)
-          )
+          createTable(tempCore.table(name), () => state.coreTrans, this.getTableHooks(name)),
         );
 
         await versionDef.upgrade(txContext);
@@ -397,7 +410,7 @@ export class LessDB {
 
     // Emit close event (IDB onclose only fires on external close)
     if (wasOpen) {
-      this.events.emit('close');
+      this.events.emit("close");
     }
   }
 
@@ -409,14 +422,14 @@ export class LessDB {
 
     const indexedDB = getIndexedDB();
     if (!indexedDB) {
-      throw new MissingAPIError('IndexedDB is not available');
+      throw new MissingAPIError("IndexedDB is not available");
     }
 
     return new Promise((resolve, reject) => {
       const request = indexedDB.deleteDatabase(this.name);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(mapError(request.error));
-      request.onblocked = () => reject(new BlockedError('Delete blocked by open connection'));
+      request.onblocked = () => reject(new BlockedError("Delete blocked by open connection"));
     });
   }
 
@@ -435,12 +448,11 @@ export class LessDB {
    * Get a table by name.
    */
   table<T = unknown, TKey = unknown>(name: string): Table<T, TKey> {
-    this.ensureOpen();
-
-    const coreTable = this.state.core!.table(name);
+    const core = this.getCore();
+    const coreTable = core.table(name);
     const hooks = this.getTableHooks<T, TKey>(name);
 
-    return createTable(coreTable, () => this.getImplicitTransaction([name], 'readwrite'), hooks);
+    return createTable(coreTable, () => this.getImplicitTransaction([name], "readwrite"), hooks);
   }
 
   /**
@@ -457,19 +469,39 @@ export class LessDB {
 
   /**
    * Get an implicit transaction for single-table operations.
+   * Note: getCore() must have been called before this to verify db is open.
    */
   private getImplicitTransaction(tables: string[], mode: TransactionMode): DBCoreTransaction {
     // Create a new transaction for each operation
-    return this.state.core!.transaction(tables, mode);
+    // This is called from table() which already verified the db is open
+    const core = this.state.core;
+    if (!core) {
+      throw new InvalidStateError("Database is not open");
+    }
+    return core.transaction(tables, mode);
   }
 
   /**
-   * Ensure the database is open.
+   * Ensure the database is open and return the DBCore.
+   * This combines the open check with core access, eliminating the need for !.
    */
-  private ensureOpen(): void {
-    if (!this.state.isOpen) {
-      throw new InvalidStateError('Database is not open. Call open() first.');
+  private getCore(): DBCore {
+    if (!this.state.isOpen || !this.state.core) {
+      throw new InvalidStateError("Database is not open. Call open() first.");
     }
+    return this.state.core;
+  }
+
+  /**
+   * Get the latest version number from the versions array.
+   * Throws if no versions are defined.
+   */
+  private getLatestVersionNumber(): number {
+    const lastVersion = this.versions.at(-1);
+    if (!lastVersion) {
+      throw new SchemaError("No schema versions defined");
+    }
+    return lastVersion.version;
   }
 
   // ========================================
@@ -482,19 +514,14 @@ export class LessDB {
   async transaction<T>(
     mode: TxMode,
     tables: Table<unknown, unknown>[] | string[],
-    fn: (tx: TransactionContext) => Promise<T>
+    fn: (tx: TransactionContext) => Promise<T>,
   ): Promise<T> {
-    this.ensureOpen();
+    const core = this.getCore();
+    const tableNames = tables.map((t) => (typeof t === "string" ? t : t.name));
 
-    const tableNames = tables.map((t) => (typeof t === 'string' ? t : t.name));
-
-    return executeTransaction(this.state.core!, tableNames, mode, async (state) => {
+    return executeTransaction(core, tableNames, mode, async (state) => {
       const txContext = new TransactionContext(state, (name, state) =>
-        createTable(
-          this.state.core!.table(name),
-          () => state.coreTrans,
-          this.getTableHooks(name)
-        )
+        createTable(core.table(name), () => state.coreTrans, this.getTableHooks(name)),
       );
 
       return fn(txContext);
@@ -510,7 +537,7 @@ export class LessDB {
    */
   on<K extends keyof DatabaseEvents & string>(
     event: K,
-    listener: (...args: DatabaseEvents[K]) => void
+    listener: (...args: DatabaseEvents[K]) => void,
   ): () => void {
     return this.events.on(event, listener);
   }
@@ -530,8 +557,8 @@ export class LessDB {
    * Get the current version number.
    */
   get verno(): number {
-    if (this.versions.length === 0) return 0;
-    return this.versions[this.versions.length - 1].version;
+    const lastVersion = this.versions.at(-1);
+    return lastVersion?.version ?? 0;
   }
 
   // ========================================
@@ -597,18 +624,18 @@ export class LessDB {
    * and re-opens it when restored.
    */
   setupBfCacheHandling(): this {
-    if (typeof addEventListener === 'undefined') {
+    if (typeof addEventListener === "undefined") {
       return this;
     }
 
-    addEventListener('pagehide', (event) => {
+    addEventListener("pagehide", (event) => {
       if ((event as PageTransitionEvent).persisted) {
         // Page is being cached - close the database but allow auto-reopen
         this.close();
       }
     });
 
-    addEventListener('pageshow', (event) => {
+    addEventListener("pageshow", (event) => {
       if ((event as PageTransitionEvent).persisted) {
         // Page was restored from cache
         // NOTE: Database must be manually reopened with open() before use

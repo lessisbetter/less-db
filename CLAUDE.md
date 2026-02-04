@@ -47,6 +47,7 @@ User API (LessDB, Table, Collection, WhereClause)
 ### Schema Definition
 
 Schemas use Dexie-style string syntax parsed by `src/schema-parser.ts`:
+
 - `++id` - Auto-increment primary key
 - `++` - Outbound auto-increment (key not in object)
 - `&email` - Unique index
@@ -57,6 +58,7 @@ Example: `'++id, name, &email'` defines auto-increment id, indexed name, unique 
 ### Events and Hooks
 
 `src/events/` provides:
+
 - `Event` - Simple pub/sub for database events (ready, blocked, versionchange, close)
 - `Hook` - Transformable hooks for table operations (creating, reading, updating, deleting)
 

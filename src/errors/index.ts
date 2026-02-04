@@ -11,4 +11,4 @@ export {
   BlockedError,
   VersionChangeError,
   mapError,
-} from './errors.js';
+} from "./errors.js";

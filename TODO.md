@@ -7,6 +7,7 @@ A minimal, extensible IndexedDB wrapper with **full API compatibility with [Dexi
 LessDB is a drop-in replacement for Dexie.js for common use cases. It provides the same API so you can migrate from Dexie with minimal code changes—typically just changing the import.
 
 **Design Goals:**
+
 1. **Dexie-Compatible** - Same API, easy migration
 2. **Simple** - Core functionality in ~1000 lines
 3. **Extensible** - Hooks and middleware for reactivity, encryption, sync
@@ -19,6 +20,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 ## Completed ✅
 
 ### Phase 1: Core (MVP)
+
 - [x] Schema parsing (`'++id, name, &email'` syntax)
 - [x] LessDB class with `version().stores()` chaining
 - [x] Table with basic CRUD (`get`, `add`, `put`, `update`, `delete`)
@@ -28,6 +30,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 - [x] Error classes (ConstraintError, NotFoundError, etc.)
 
 ### Phase 2: Query Power
+
 - [x] WhereClause with all range methods
   - `equals`, `notEqual`, `anyOf`, `noneOf`
   - `above`, `aboveOrEqual`, `below`, `belowOrEqual`, `between`
@@ -39,6 +42,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 - [x] `primaryKeys()` / `keys()`
 
 ### Phase 2b: Additional Dexie API Compatibility
+
 - [x] `Table.upsert()` - Add or update in one call
 - [x] `Table.bulkUpdate()` - Batch update operations
 - [x] `WhereClause.anyOfIgnoreCase()` - Case-insensitive anyOf
@@ -56,6 +60,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 - [x] `Collection.lastKey()` - Get last key without value
 
 ### Phase 3: Extensibility
+
 - [x] Table hooks (`creating`, `reading`, `updating`, `deleting`)
 - [x] Database events (`ready`, `blocked`, `versionchange`, `close`, `changes`)
 - [x] DBCore abstraction layer (foundation for middleware)
@@ -63,6 +68,7 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 - [x] **bfcache handling** - `setupBfCacheHandling()` for back/forward cache support
 
 ### Infrastructure
+
 - [x] TypeScript with strict types
 - [x] Vitest test suite (255 tests passing)
 - [x] ~80% code coverage
@@ -72,12 +78,14 @@ LessDB is a drop-in replacement for Dexie.js for common use cases. It provides t
 ## Remaining 🚧
 
 ### Phase 4: Polish
+
 - [ ] **Documentation** - API docs, usage examples, migration guide from Dexie
 - [ ] **Performance optimization** - Profile and optimize hot paths
 - [ ] **Auto-open** - Currently requires explicit `db.open()`, could auto-open on first operation
 - [ ] **Table proxy access** - `db.friends` shorthand (partially working, needs testing)
 
 ### Future Extensions (Designed For, Not Planned for v1)
+
 - [ ] **Live queries / reactivity** - `liveQuery(() => db.friends.toArray())`
 - [ ] **Encryption middleware** - Encrypt specific fields or entire tables
 - [ ] **Sync middleware** - Track local changes, apply remote changes
@@ -119,15 +127,15 @@ src/
 
 ## Test Coverage
 
-| Module | Tests | Status |
-|--------|-------|--------|
-| errors | 24 | ✅ |
-| compat | 37 | ✅ |
-| events | 33 | ✅ |
-| schema-parser | 35 | ✅ |
-| dbcore | 36 | ✅ |
-| less-db (integration) | 90 | ✅ |
-| **Total** | **255** | ✅ |
+| Module                | Tests   | Status |
+| --------------------- | ------- | ------ |
+| errors                | 24      | ✅     |
+| compat                | 37      | ✅     |
+| events                | 33      | ✅     |
+| schema-parser         | 35      | ✅     |
+| dbcore                | 36      | ✅     |
+| less-db (integration) | 90      | ✅     |
+| **Total**             | **255** | ✅     |
 
 ---
 
@@ -143,32 +151,33 @@ src/
 ## Quick Start
 
 ```typescript
-import { LessDB } from 'less-db';
+import { LessDB } from "less-db";
 
-const db = new LessDB('MyApp');
+const db = new LessDB("MyApp");
 
 db.version(1).stores({
-  users: '++id, name, &email',
-  posts: '++id, userId, createdAt'
+  users: "++id, name, &email",
+  posts: "++id, userId, createdAt",
 });
 
 await db.open();
 
 // CRUD
-const id = await db.table('users').add({ name: 'Alice', email: 'alice@example.com' });
-const user = await db.table('users').get(id);
+const id = await db.table("users").add({ name: "Alice", email: "alice@example.com" });
+const user = await db.table("users").get(id);
 
 // Queries
-const recentPosts = await db.table('posts')
-  .where('createdAt')
+const recentPosts = await db
+  .table("posts")
+  .where("createdAt")
   .above(Date.now() - 86400000)
   .limit(10)
   .toArray();
 
 // Transactions
-await db.transaction('rw', ['users', 'posts'], async (tx) => {
-  const userId = await tx.table('users').add({ name: 'Bob', email: 'bob@example.com' });
-  await tx.table('posts').add({ userId, title: 'Hello', createdAt: Date.now() });
+await db.transaction("rw", ["users", "posts"], async (tx) => {
+  const userId = await tx.table("users").add({ name: "Bob", email: "bob@example.com" });
+  await tx.table("posts").add({ userId, title: "Hello", createdAt: Date.now() });
 });
 ```
 

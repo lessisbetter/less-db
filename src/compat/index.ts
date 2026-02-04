@@ -19,7 +19,7 @@ declare const globalThis: {
  * Get the IndexedDB factory, handling vendor prefixes.
  */
 export function getIndexedDB(): IDBFactory | undefined {
-  if (typeof globalThis === 'undefined') return undefined;
+  if (typeof globalThis === "undefined") return undefined;
   return (
     globalThis.indexedDB ||
     globalThis.mozIndexedDB ||
@@ -32,7 +32,7 @@ export function getIndexedDB(): IDBFactory | undefined {
  * Get the IDBKeyRange constructor, handling vendor prefixes.
  */
 export function getIDBKeyRange(): typeof IDBKeyRange | undefined {
-  if (typeof globalThis === 'undefined') return undefined;
+  if (typeof globalThis === "undefined") return undefined;
   return globalThis.IDBKeyRange || globalThis.webkitIDBKeyRange;
 }
 
@@ -41,7 +41,12 @@ export function getIDBKeyRange(): typeof IDBKeyRange | undefined {
  * This function reduces store names array to a single string when there's only one.
  */
 export function safariMultiStoreFix(storeNames: string[]): string | string[] {
-  return storeNames.length === 1 ? storeNames[0] : storeNames;
+  if (storeNames.length === 1) {
+    const [first] = storeNames;
+    // Destructuring guarantees first exists when length === 1
+    return first as string;
+  }
+  return storeNames;
 }
 
 /**
@@ -57,7 +62,7 @@ export function fixOldVersion(oldVersion: number): number {
  * Safari versions below 604 have a broken getAll().
  */
 export function hasWorkingGetAll(): boolean {
-  if (typeof navigator === 'undefined') return true;
+  if (typeof navigator === "undefined") return true;
   const ua = navigator.userAgent;
 
   // Not Safari
@@ -68,7 +73,7 @@ export function hasWorkingGetAll(): boolean {
 
   // Check Safari version
   const match = ua.match(/Safari\/(\d+)/);
-  if (match) {
+  if (match?.[1]) {
     const version = parseInt(match[1], 10);
     return version >= 604;
   }
@@ -116,28 +121,28 @@ export function getMinKey(): unknown {
  * Use Object.prototype.toString for reliable type checking.
  */
 export function getValueType(
-  value: unknown
-): 'string' | 'number' | 'boolean' | 'undefined' | 'null' | 'array' | 'date' | 'binary' | 'object' {
-  if (value === null) return 'null';
-  if (value === undefined) return 'undefined';
+  value: unknown,
+): "string" | "number" | "boolean" | "undefined" | "null" | "array" | "date" | "binary" | "object" {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
 
   const t = typeof value;
-  if (t === 'string' || t === 'number' || t === 'boolean') {
+  if (t === "string" || t === "number" || t === "boolean") {
     return t;
   }
 
-  if (ArrayBuffer.isView(value)) return 'binary';
+  if (ArrayBuffer.isView(value)) return "binary";
 
   const tag = Object.prototype.toString.call(value).slice(8, -1);
   switch (tag) {
-    case 'Array':
-      return 'array';
-    case 'Date':
-      return 'date';
-    case 'ArrayBuffer':
-      return 'binary';
+    case "Array":
+      return "array";
+    case "Date":
+      return "date";
+    case "ArrayBuffer":
+      return "binary";
     default:
-      return 'object';
+      return "object";
   }
 }
 
@@ -146,7 +151,7 @@ export function getValueType(
  * exists but has an undefined value. This removes the property.
  */
 export function fixUndefinedKey<T extends object>(obj: T, keyPath: string | null): T {
-  if (!keyPath || typeof keyPath !== 'string' || keyPath.includes('.')) {
+  if (!keyPath || typeof keyPath !== "string" || keyPath.includes(".")) {
     return obj;
   }
 
@@ -186,7 +191,7 @@ export function compareKeys(a: unknown, b: unknown): number {
   const typeB = getValueType(b);
 
   // Type order: undefined < null < number < date < string < binary < array
-  const typeOrder = ['undefined', 'null', 'number', 'date', 'string', 'binary', 'array'];
+  const typeOrder = ["undefined", "null", "number", "date", "string", "binary", "array"];
   const orderA = typeOrder.indexOf(typeA);
   const orderB = typeOrder.indexOf(typeB);
 
@@ -196,11 +201,11 @@ export function compareKeys(a: unknown, b: unknown): number {
 
   // Same type, compare values
   switch (typeA) {
-    case 'undefined':
-    case 'null':
+    case "undefined":
+    case "null":
       return 0;
 
-    case 'number': {
+    case "number": {
       const numA = a as number;
       const numB = b as number;
       if (numA < numB) return -1;
@@ -208,7 +213,7 @@ export function compareKeys(a: unknown, b: unknown): number {
       return 0;
     }
 
-    case 'date': {
+    case "date": {
       const timeA = (a as Date).getTime();
       const timeB = (b as Date).getTime();
       if (timeA < timeB) return -1;
@@ -216,7 +221,7 @@ export function compareKeys(a: unknown, b: unknown): number {
       return 0;
     }
 
-    case 'string': {
+    case "string": {
       const strA = a as string;
       const strB = b as string;
       if (strA < strB) return -1;
@@ -224,7 +229,7 @@ export function compareKeys(a: unknown, b: unknown): number {
       return 0;
     }
 
-    case 'binary': {
+    case "binary": {
       const bufA = ArrayBuffer.isView(a)
         ? new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
         : new Uint8Array(a as ArrayBuffer);
@@ -233,15 +238,19 @@ export function compareKeys(a: unknown, b: unknown): number {
         : new Uint8Array(b as ArrayBuffer);
       const len = Math.min(bufA.length, bufB.length);
       for (let i = 0; i < len; i++) {
-        if (bufA[i] < bufB[i]) return -1;
-        if (bufA[i] > bufB[i]) return 1;
+        const byteA = bufA[i];
+        const byteB = bufB[i];
+        // Loop bounds guarantee these exist, but check satisfies TypeScript
+        if (byteA === undefined || byteB === undefined) continue;
+        if (byteA < byteB) return -1;
+        if (byteA > byteB) return 1;
       }
       if (bufA.length < bufB.length) return -1;
       if (bufA.length > bufB.length) return 1;
       return 0;
     }
 
-    case 'array': {
+    case "array": {
       const arrA = a as unknown[];
       const arrB = b as unknown[];
       const len = Math.min(arrA.length, arrB.length);
@@ -264,26 +273,26 @@ export function compareKeys(a: unknown, b: unknown): number {
  */
 export const browserEnv = {
   get isSafari(): boolean {
-    if (typeof navigator === 'undefined') return false;
+    if (typeof navigator === "undefined") return false;
     return /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
   },
 
   get isFirefox(): boolean {
-    if (typeof navigator === 'undefined') return false;
+    if (typeof navigator === "undefined") return false;
     return /Firefox/.test(navigator.userAgent);
   },
 
   get isChrome(): boolean {
-    if (typeof navigator === 'undefined') return false;
+    if (typeof navigator === "undefined") return false;
     return /Chrome/.test(navigator.userAgent);
   },
 
   get isEdge(): boolean {
-    if (typeof navigator === 'undefined') return false;
+    if (typeof navigator === "undefined") return false;
     return /Edg\//.test(navigator.userAgent);
   },
 
   get isNode(): boolean {
-    return typeof navigator === 'undefined';
+    return typeof navigator === "undefined";
   },
 };

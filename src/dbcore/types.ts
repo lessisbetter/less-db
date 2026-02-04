@@ -5,12 +5,12 @@
  * enabling middleware to intercept and modify operations.
  */
 
-import type { TableSchema } from '../schema-parser.js';
+import type { TableSchema } from "../schema-parser.js";
 
 /**
  * Transaction mode.
  */
-export type TransactionMode = 'readonly' | 'readwrite';
+export type TransactionMode = "readonly" | "readwrite";
 
 /**
  * Key range types for queries.
@@ -99,7 +99,7 @@ export type DBCoreCursorCallback = (cursor: DBCoreCursor | null) => void;
  */
 export interface DBCoreMutateRequest {
   /** Type of mutation */
-  type: 'add' | 'put' | 'delete' | 'deleteRange';
+  type: "add" | "put" | "delete" | "deleteRange";
   /** Values to add/put (for add/put) */
   values?: unknown[];
   /** Keys for the values (for outbound keys) */
@@ -158,7 +158,7 @@ export interface DBCoreTable {
   openCursor(
     trans: DBCoreTransaction,
     request: DBCoreQueryRequest,
-    callback: DBCoreCursorCallback
+    callback: DBCoreCursorCallback,
   ): Promise<void>;
 
   /** Count matching records */
@@ -196,7 +196,7 @@ export function keyRangeRange(
   lower: unknown,
   upper: unknown,
   lowerOpen = false,
-  upperOpen = false
+  upperOpen = false,
 ): DBCoreKeyRange {
   return {
     type: DBCoreRangeType.Range,

@@ -2,13 +2,13 @@
  * Table class - the primary API for working with a single table.
  */
 
-import type { DBCoreTable, DBCoreTransaction } from './dbcore/index.js';
-import { keyRangeRange } from './dbcore/index.js';
-import type { TableSchema } from './schema-parser.js';
-import { Collection, createCollectionContext } from './collection.js';
-import { WhereClause } from './where-clause.js';
-import { createTableHooks, type TableHooks } from './events/index.js';
-import { ConstraintError } from './errors/index.js';
+import type { DBCoreTable, DBCoreTransaction } from "./dbcore/index.js";
+import { keyRangeRange } from "./dbcore/index.js";
+import type { TableSchema } from "./schema-parser.js";
+import { Collection, createCollectionContext } from "./collection.js";
+import { WhereClause } from "./where-clause.js";
+import { createTableHooks, type TableHooks } from "./events/index.js";
+import { ConstraintError } from "./errors/index.js";
 
 /**
  * Table class for CRUD operations and queries.
@@ -29,7 +29,7 @@ export class Table<T, TKey> {
   constructor(
     coreTable: DBCoreTable,
     getTransaction: () => DBCoreTransaction,
-    hooks?: TableHooks<T, TKey>
+    hooks?: TableHooks<T, TKey>,
   ) {
     this._coreTable = coreTable;
     this._getTransaction = getTransaction;
@@ -70,16 +70,21 @@ export class Table<T, TKey> {
     this.hook.creating.fire(key, item);
 
     const result = await this._coreTable.mutate(trans, {
-      type: 'add',
+      type: "add",
       values: [item],
       keys: key !== undefined ? [key] : undefined,
     });
 
     if (result.numFailures > 0) {
-      throw result.failures![0];
+      const firstError = result.failures?.[0];
+      throw firstError ?? new ConstraintError("Add operation failed");
     }
 
-    return result.results![0] as TKey;
+    const resultKey = result.results?.[0];
+    if (resultKey === undefined) {
+      throw new ConstraintError("Add operation did not return a key");
+    }
+    return resultKey as TKey;
   }
 
   /**
@@ -89,16 +94,21 @@ export class Table<T, TKey> {
     const trans = this._getTransaction();
 
     const result = await this._coreTable.mutate(trans, {
-      type: 'put',
+      type: "put",
       values: [item],
       keys: key !== undefined ? [key] : undefined,
     });
 
     if (result.numFailures > 0) {
-      throw result.failures![0];
+      const firstError = result.failures?.[0];
+      throw firstError ?? new ConstraintError("Put operation failed");
     }
 
-    return result.results![0] as TKey;
+    const resultKey = result.results?.[0];
+    if (resultKey === undefined) {
+      throw new ConstraintError("Put operation did not return a key");
+    }
+    return resultKey as TKey;
   }
 
   /**
@@ -121,7 +131,7 @@ export class Table<T, TKey> {
     const updated = { ...existing, ...changes } as T;
 
     const result = await this._coreTable.mutate(trans, {
-      type: 'put',
+      type: "put",
       values: [updated],
       keys: [key],
     });
@@ -139,7 +149,8 @@ export class Table<T, TKey> {
 
     // Determine the key to check
     const keyPath = this.schema.primaryKey.keyPath;
-    const lookupKey = key ?? (keyPath ? (item as Record<string, unknown>)[keyPath] as TKey : undefined);
+    const lookupKey =
+      key ?? (keyPath ? ((item as Record<string, unknown>)[keyPath] as TKey) : undefined);
 
     if (lookupKey !== undefined) {
       // Try to get existing item
@@ -151,13 +162,14 @@ export class Table<T, TKey> {
         this.hook.updating.fire(item as Partial<T>, lookupKey, existing);
 
         const result = await this._coreTable.mutate(trans, {
-          type: 'put',
+          type: "put",
           values: [merged],
           keys: [lookupKey],
         });
 
         if (result.numFailures > 0) {
-          throw result.failures![0];
+          const firstError = result.failures?.[0];
+          throw firstError ?? new ConstraintError("Upsert update failed");
         }
 
         return lookupKey;
@@ -168,16 +180,21 @@ export class Table<T, TKey> {
     this.hook.creating.fire(lookupKey, item as T);
 
     const result = await this._coreTable.mutate(trans, {
-      type: 'add',
+      type: "add",
       values: [item],
       keys: lookupKey !== undefined ? [lookupKey] : undefined,
     });
 
     if (result.numFailures > 0) {
-      throw result.failures![0];
+      const firstError = result.failures?.[0];
+      throw firstError ?? new ConstraintError("Upsert add failed");
     }
 
-    return result.results![0] as TKey;
+    const resultKey = result.results?.[0];
+    if (resultKey === undefined) {
+      throw new ConstraintError("Upsert operation did not return a key");
+    }
+    return resultKey as TKey;
   }
 
   /**
@@ -195,7 +212,7 @@ export class Table<T, TKey> {
     }
 
     await this._coreTable.mutate(trans, {
-      type: 'delete',
+      type: "delete",
       keys: [key],
     });
   }
@@ -235,19 +252,19 @@ export class Table<T, TKey> {
     });
 
     const result = await this._coreTable.mutate(trans, {
-      type: 'add',
+      type: "add",
       values: items,
       keys,
     });
 
     if (result.numFailures > 0) {
-      const errors = Object.entries(result.failures!).map(
-        ([idx, err]) => `[${idx}]: ${err.message}`
-      );
-      throw new ConstraintError(`BulkAdd failed: ${errors.join(', ')}`);
+      const failures = result.failures ?? {};
+      const errors = Object.entries(failures).map(([idx, err]) => `[${idx}]: ${err.message}`);
+      const message = errors.length > 0 ? errors.join(", ") : `${result.numFailures} error(s)`;
+      throw new ConstraintError(`BulkAdd failed: ${message}`);
     }
 
-    return result.results as TKey[];
+    return (result.results ?? []) as TKey[];
   }
 
   /**
@@ -257,27 +274,25 @@ export class Table<T, TKey> {
     const trans = this._getTransaction();
 
     const result = await this._coreTable.mutate(trans, {
-      type: 'put',
+      type: "put",
       values: items,
       keys,
     });
 
     if (result.numFailures > 0) {
-      const errors = Object.entries(result.failures!).map(
-        ([idx, err]) => `[${idx}]: ${err.message}`
-      );
-      throw new ConstraintError(`BulkPut failed: ${errors.join(', ')}`);
+      const failures = result.failures ?? {};
+      const errors = Object.entries(failures).map(([idx, err]) => `[${idx}]: ${err.message}`);
+      const message = errors.length > 0 ? errors.join(", ") : `${result.numFailures} error(s)`;
+      throw new ConstraintError(`BulkPut failed: ${message}`);
     }
 
-    return result.results as TKey[];
+    return (result.results ?? []) as TKey[];
   }
 
   /**
    * Update multiple items by key. Returns number of items updated.
    */
-  async bulkUpdate(
-    keysAndChanges: { key: TKey; changes: Partial<T> }[]
-  ): Promise<number> {
+  async bulkUpdate(keysAndChanges: { key: TKey; changes: Partial<T> }[]): Promise<number> {
     if (keysAndChanges.length === 0) {
       return 0;
     }
@@ -292,11 +307,11 @@ export class Table<T, TKey> {
     const updates: { key: TKey; value: T }[] = [];
     for (let i = 0; i < keysAndChanges.length; i++) {
       const existing = existingItems[i];
-      if (existing !== undefined) {
-        const { key, changes } = keysAndChanges[i];
-        this.hook.updating.fire(changes, key, existing);
-        const merged = { ...existing, ...changes } as T;
-        updates.push({ key, value: merged });
+      const item = keysAndChanges[i];
+      if (existing !== undefined && item !== undefined) {
+        this.hook.updating.fire(item.changes, item.key, existing);
+        const merged = { ...existing, ...item.changes } as T;
+        updates.push({ key: item.key, value: merged });
       }
     }
 
@@ -306,16 +321,16 @@ export class Table<T, TKey> {
 
     // Put all updates
     const result = await this._coreTable.mutate(trans, {
-      type: 'put',
+      type: "put",
       values: updates.map((u) => u.value),
       keys: updates.map((u) => u.key),
     });
 
     if (result.numFailures > 0) {
-      const errors = Object.entries(result.failures!).map(
-        ([idx, err]) => `[${idx}]: ${err.message}`
-      );
-      throw new ConstraintError(`BulkUpdate failed: ${errors.join(', ')}`);
+      const failures = result.failures ?? {};
+      const errors = Object.entries(failures).map(([idx, err]) => `[${idx}]: ${err.message}`);
+      const message = errors.length > 0 ? errors.join(", ") : `${result.numFailures} error(s)`;
+      throw new ConstraintError(`BulkUpdate failed: ${message}`);
     }
 
     return updates.length;
@@ -328,7 +343,7 @@ export class Table<T, TKey> {
     const trans = this._getTransaction();
 
     await this._coreTable.mutate(trans, {
-      type: 'delete',
+      type: "delete",
       keys,
     });
   }
@@ -344,7 +359,7 @@ export class Table<T, TKey> {
     const trans = this._getTransaction();
 
     await this._coreTable.mutate(trans, {
-      type: 'deleteRange',
+      type: "deleteRange",
       range: keyRangeRange(undefined, undefined),
     });
   }
@@ -406,7 +421,7 @@ export class Table<T, TKey> {
 export function createTable<T, TKey>(
   coreTable: DBCoreTable,
   getTransaction: () => DBCoreTransaction,
-  hooks?: TableHooks<T, TKey>
+  hooks?: TableHooks<T, TKey>,
 ): Table<T, TKey> {
   return new Table(coreTable, getTransaction, hooks);
 }

@@ -7,7 +7,7 @@ export class LessDBError extends Error {
 
   constructor(message: string, inner?: Error) {
     super(message);
-    this.name = 'LessDBError';
+    this.name = "LessDBError";
     this.inner = inner;
     // Maintains proper stack trace in V8 environments
     if (Error.captureStackTrace) {
@@ -20,9 +20,9 @@ export class LessDBError extends Error {
  * Thrown when a uniqueness constraint is violated (duplicate key).
  */
 export class ConstraintError extends LessDBError {
-  constructor(message = 'Constraint violation', inner?: Error) {
+  constructor(message = "Constraint violation", inner?: Error) {
     super(message, inner);
-    this.name = 'ConstraintError';
+    this.name = "ConstraintError";
   }
 }
 
@@ -30,9 +30,9 @@ export class ConstraintError extends LessDBError {
  * Thrown when a requested item is not found.
  */
 export class NotFoundError extends LessDBError {
-  constructor(message = 'Item not found', inner?: Error) {
+  constructor(message = "Item not found", inner?: Error) {
     super(message, inner);
-    this.name = 'NotFoundError';
+    this.name = "NotFoundError";
   }
 }
 
@@ -40,9 +40,9 @@ export class NotFoundError extends LessDBError {
  * Thrown when the database is in an invalid state for the operation.
  */
 export class InvalidStateError extends LessDBError {
-  constructor(message = 'Invalid state', inner?: Error) {
+  constructor(message = "Invalid state", inner?: Error) {
     super(message, inner);
-    this.name = 'InvalidStateError';
+    this.name = "InvalidStateError";
   }
 }
 
@@ -50,9 +50,9 @@ export class InvalidStateError extends LessDBError {
  * Thrown when an invalid table is referenced.
  */
 export class InvalidTableError extends LessDBError {
-  constructor(message = 'Invalid table', inner?: Error) {
+  constructor(message = "Invalid table", inner?: Error) {
     super(message, inner);
-    this.name = 'InvalidTableError';
+    this.name = "InvalidTableError";
   }
 }
 
@@ -60,9 +60,9 @@ export class InvalidTableError extends LessDBError {
  * Thrown when invalid data is provided.
  */
 export class DataError extends LessDBError {
-  constructor(message = 'Invalid data', inner?: Error) {
+  constructor(message = "Invalid data", inner?: Error) {
     super(message, inner);
-    this.name = 'DataError';
+    this.name = "DataError";
   }
 }
 
@@ -70,9 +70,9 @@ export class DataError extends LessDBError {
  * Thrown when a transaction is aborted.
  */
 export class AbortError extends LessDBError {
-  constructor(message = 'Transaction aborted', inner?: Error) {
+  constructor(message = "Transaction aborted", inner?: Error) {
     super(message, inner);
-    this.name = 'AbortError';
+    this.name = "AbortError";
   }
 }
 
@@ -80,9 +80,9 @@ export class AbortError extends LessDBError {
  * Thrown when a required API is missing (e.g., IndexedDB not available).
  */
 export class MissingAPIError extends LessDBError {
-  constructor(message = 'Required API not available', inner?: Error) {
+  constructor(message = "Required API not available", inner?: Error) {
     super(message, inner);
-    this.name = 'MissingAPIError';
+    this.name = "MissingAPIError";
   }
 }
 
@@ -90,9 +90,9 @@ export class MissingAPIError extends LessDBError {
  * Thrown when a schema error occurs.
  */
 export class SchemaError extends LessDBError {
-  constructor(message = 'Schema error', inner?: Error) {
+  constructor(message = "Schema error", inner?: Error) {
     super(message, inner);
-    this.name = 'SchemaError';
+    this.name = "SchemaError";
   }
 }
 
@@ -100,9 +100,9 @@ export class SchemaError extends LessDBError {
  * Thrown when the database is blocked by another connection.
  */
 export class BlockedError extends LessDBError {
-  constructor(message = 'Database blocked', inner?: Error) {
+  constructor(message = "Database blocked", inner?: Error) {
     super(message, inner);
-    this.name = 'BlockedError';
+    this.name = "BlockedError";
   }
 }
 
@@ -110,9 +110,9 @@ export class BlockedError extends LessDBError {
  * Thrown when a version change event occurs.
  */
 export class VersionChangeError extends LessDBError {
-  constructor(message = 'Version change detected', inner?: Error) {
+  constructor(message = "Version change detected", inner?: Error) {
     super(message, inner);
-    this.name = 'VersionChangeError';
+    this.name = "VersionChangeError";
   }
 }
 
@@ -129,15 +129,15 @@ export function mapError(error: unknown): LessDBError {
     const message = error.message;
 
     switch (name) {
-      case 'ConstraintError':
+      case "ConstraintError":
         return new ConstraintError(message, error);
-      case 'NotFoundError':
+      case "NotFoundError":
         return new NotFoundError(message, error);
-      case 'InvalidStateError':
+      case "InvalidStateError":
         return new InvalidStateError(message, error);
-      case 'DataError':
+      case "DataError":
         return new DataError(message, error);
-      case 'AbortError':
+      case "AbortError":
         return new AbortError(message, error);
       default:
         return new LessDBError(message, error);

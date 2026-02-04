@@ -31,7 +31,7 @@ export class Event<T extends unknown[] = []> {
         listener(...args);
       } catch (error) {
         // Log but don't stop other listeners
-        console.error('Event listener error:', error);
+        console.error("Event listener error:", error);
       }
     }
   }
@@ -172,7 +172,7 @@ export interface DatabaseChange {
   /** The table that was modified */
   table: string;
   /** The type of modification */
-  type: 'add' | 'put' | 'delete';
+  type: "add" | "put" | "delete";
   /** The primary key of the affected item */
   key: unknown;
   /** The new value (for add/put) */

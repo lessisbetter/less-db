@@ -2,20 +2,20 @@
  * Transaction class - provides a user-friendly transaction API.
  */
 
-import type { DBCore, DBCoreTransaction, TransactionMode } from './dbcore/index.js';
-import type { Table } from './table.js';
-import { AbortError, InvalidTableError } from './errors/index.js';
+import type { DBCore, DBCoreTransaction, TransactionMode } from "./dbcore/index.js";
+import type { Table } from "./table.js";
+import { AbortError, InvalidTableError } from "./errors/index.js";
 
 /**
  * Transaction modes (aliases supported).
  */
-export type TxMode = 'r' | 'readonly' | 'rw' | 'readwrite';
+export type TxMode = "r" | "readonly" | "rw" | "readwrite";
 
 /**
  * Normalize transaction mode to standard form.
  */
 export function normalizeMode(mode: TxMode): TransactionMode {
-  return mode === 'r' || mode === 'readonly' ? 'readonly' : 'readwrite';
+  return mode === "r" || mode === "readonly" ? "readonly" : "readwrite";
 }
 
 /**
@@ -54,7 +54,7 @@ export interface TransactionState {
 export function createTransactionState(
   core: DBCore,
   tableNames: string[],
-  mode: TransactionMode
+  mode: TransactionMode,
 ): TransactionState {
   const coreTrans = core.transaction(tableNames, mode);
 
@@ -69,13 +69,13 @@ export function createTransactionState(
 
     idbTrans.onerror = () => {
       state.active = false;
-      state.error = idbTrans.error ?? new AbortError('Transaction failed');
+      state.error = idbTrans.error ?? new AbortError("Transaction failed");
       reject(state.error);
     };
 
     idbTrans.onabort = () => {
       state.active = false;
-      state.error = state.error ?? new AbortError('Transaction aborted');
+      state.error = state.error ?? new AbortError("Transaction aborted");
       reject(state.error);
     };
   });
@@ -103,7 +103,7 @@ export async function executeTransaction<T>(
   core: DBCore,
   tableNames: string[],
   mode: TxMode,
-  fn: (state: TransactionState) => Promise<T>
+  fn: (state: TransactionState) => Promise<T>,
 ): Promise<T> {
   const normalizedMode = normalizeMode(mode);
   const state = createTransactionState(core, tableNames, normalizedMode);
@@ -143,7 +143,7 @@ export class TransactionContext implements Transaction {
 
   constructor(
     state: TransactionState,
-    tableFactory: (name: string, state: TransactionState) => Table<unknown, unknown>
+    tableFactory: (name: string, state: TransactionState) => Table<unknown, unknown>,
   ) {
     this.state = state;
     this.tableFactory = tableFactory;

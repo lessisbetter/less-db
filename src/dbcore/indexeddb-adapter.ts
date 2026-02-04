@@ -2,15 +2,15 @@
  * IndexedDB adapter - implements DBCore interface using native IndexedDB.
  */
 
-import type { TableSchema } from '../schema-parser.js';
-import { mapError, InvalidTableError } from '../errors/index.js';
+import type { TableSchema } from "../schema-parser.js";
+import { mapError, InvalidTableError } from "../errors/index.js";
 import {
   getIDBKeyRange,
   safariMultiStoreFix,
   hasWorkingGetAll,
   fixUndefinedKey,
   compareKeys,
-} from '../compat/index.js';
+} from "../compat/index.js";
 import {
   type DBCore,
   type DBCoreTable,
@@ -23,7 +23,7 @@ import {
   type DBCoreCursorCallback,
   type TransactionMode,
   DBCoreRangeType,
-} from './types.js';
+} from "./types.js";
 
 /**
  * Convert our key range to IDBKeyRange.
@@ -106,24 +106,26 @@ class IDBCoreTable implements DBCoreTable {
   async getMany(trans: DBCoreTransaction, keys: unknown[]): Promise<unknown[]> {
     const store = this.getStore(trans);
     // Individual gets in parallel - IDB batches these efficiently within the transaction
-    return Promise.all(
-      keys.map((key) => promisifyRequest(store.get(key as IDBValidKey)))
-    );
+    return Promise.all(keys.map((key) => promisifyRequest(store.get(key as IDBValidKey))));
   }
 
   async query(trans: DBCoreTransaction, request: DBCoreQueryRequest): Promise<DBCoreQueryResponse> {
     const store = this.getStore(trans);
     const source = this.getIndex(store, request.index);
     const idbRange = toIDBKeyRange(request.range);
-    const direction: IDBCursorDirection = request.reverse ? 'prev' : 'next';
+    const direction: IDBCursorDirection = request.reverse ? "prev" : "next";
 
     const values: unknown[] = [];
     const keys: unknown[] = [];
 
     // Handle "any of" queries by doing multiple queries
     if (request.range.type === DBCoreRangeType.Any && request.range.values) {
+      const IDBKeyRange = getIDBKeyRange();
+      if (!IDBKeyRange) {
+        // Fallback: can't do range queries without IDBKeyRange
+        return { values: [], keys: [] };
+      }
       for (const value of request.range.values) {
-        const IDBKeyRange = getIDBKeyRange()!;
         const singleRange = IDBKeyRange.only(value);
 
         if (this.useGetAll && !request.offset && source instanceof IDBObjectStore) {
@@ -176,7 +178,7 @@ class IDBCoreTable implements DBCoreTable {
     request: DBCoreQueryRequest,
     values: unknown[],
     keys: unknown[],
-    filter?: (value: unknown, key: unknown) => boolean
+    filter?: (value: unknown, key: unknown) => boolean,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const cursorRequest = source.openCursor(range, direction);
@@ -235,12 +237,12 @@ class IDBCoreTable implements DBCoreTable {
   async openCursor(
     trans: DBCoreTransaction,
     request: DBCoreQueryRequest,
-    callback: DBCoreCursorCallback
+    callback: DBCoreCursorCallback,
   ): Promise<void> {
     const store = this.getStore(trans);
     const source = this.getIndex(store, request.index);
     const idbRange = toIDBKeyRange(request.range);
-    const direction: IDBCursorDirection = request.reverse ? 'prev' : 'next';
+    const direction: IDBCursorDirection = request.reverse ? "prev" : "next";
 
     return new Promise((resolve, reject) => {
       const cursorRequest = source.openCursor(idbRange, direction);
@@ -307,12 +309,15 @@ class IDBCoreTable implements DBCoreTable {
     return promisifyRequest(store.count(idbRange));
   }
 
-  async mutate(trans: DBCoreTransaction, request: DBCoreMutateRequest): Promise<DBCoreMutateResponse> {
+  async mutate(
+    trans: DBCoreTransaction,
+    request: DBCoreMutateRequest,
+  ): Promise<DBCoreMutateResponse> {
     const store = this.getStore(trans);
     const keyPath = this.schema.primaryKey.keyPath;
 
     switch (request.type) {
-      case 'add': {
+      case "add": {
         const results: unknown[] = [];
         const failures: Record<number, Error> = {};
         let numFailures = 0;
@@ -345,7 +350,7 @@ class IDBCoreTable implements DBCoreTable {
         };
       }
 
-      case 'put': {
+      case "put": {
         const results: unknown[] = [];
         const failures: Record<number, Error> = {};
         let numFailures = 0;
@@ -378,7 +383,7 @@ class IDBCoreTable implements DBCoreTable {
         };
       }
 
-      case 'delete': {
+      case "delete": {
         const failures: Record<number, Error> = {};
         let numFailures = 0;
 
@@ -397,13 +402,18 @@ class IDBCoreTable implements DBCoreTable {
         };
       }
 
-      case 'deleteRange': {
+      case "deleteRange": {
         try {
-          const idbRange = toIDBKeyRange(request.range!);
-          if (idbRange) {
-            await promisifyRequest(store.delete(idbRange));
+          if (request.range) {
+            const idbRange = toIDBKeyRange(request.range);
+            if (idbRange) {
+              await promisifyRequest(store.delete(idbRange));
+            } else {
+              // Delete all (full range)
+              await promisifyRequest(store.clear());
+            }
           } else {
-            // Delete all
+            // No range specified - delete all
             await promisifyRequest(store.clear());
           }
           return { numFailures: 0 };
@@ -465,7 +475,7 @@ export class IDBCore implements DBCore {
 
   transaction(tableNames: string[], mode: TransactionMode): DBCoreTransaction {
     const storeNames = safariMultiStoreFix(tableNames);
-    const idbMode = mode === 'readwrite' ? 'readwrite' : 'readonly';
+    const idbMode = mode === "readwrite" ? "readwrite" : "readonly";
     const idbTrans = this.idbDatabase.transaction(storeNames, idbMode);
     return new IDBCoreTransaction(idbTrans, tableNames, mode);
   }

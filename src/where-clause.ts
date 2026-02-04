@@ -2,7 +2,7 @@
  * WhereClause class - builds index queries that return Collections.
  */
 
-import type { DBCoreTable, DBCoreTransaction, DBCoreKeyRange } from './dbcore/index.js';
+import type { DBCoreTable, DBCoreTransaction, DBCoreKeyRange } from "./dbcore/index.js";
 import {
   keyRangeEqual,
   keyRangeRange,
@@ -10,9 +10,9 @@ import {
   keyRangeAbove,
   keyRangeBelow,
   DBCoreRangeType,
-} from './dbcore/index.js';
-import { Collection, type CollectionContext } from './collection.js';
-import { compareKeys } from './compat/index.js';
+} from "./dbcore/index.js";
+import { Collection, type CollectionContext } from "./collection.js";
+import { compareKeys } from "./compat/index.js";
 
 /**
  * WhereClause for building index queries.
@@ -113,7 +113,7 @@ export class WhereClause<T, TKey> {
    * Get the indexed value from an item.
    */
   private getIndexValue(item: unknown): unknown {
-    if (!item || typeof item !== 'object') return undefined;
+    if (!item || typeof item !== "object") return undefined;
 
     // Handle primary key
     if (!this.indexName) {
@@ -160,7 +160,7 @@ export class WhereClause<T, TKey> {
     lower: unknown,
     upper: unknown,
     includeLower = true,
-    includeUpper = false
+    includeUpper = false,
   ): Collection<T, TKey> {
     return this.toCollection(keyRangeRange(lower, upper, !includeLower, !includeUpper));
   }
@@ -169,13 +169,14 @@ export class WhereClause<T, TKey> {
    * Match strings that start with the given prefix.
    */
   startsWith(prefix: string): Collection<T, TKey> {
-    if (prefix === '') {
+    if (prefix === "") {
       // Empty prefix matches everything
       return this.toCollection(keyRangeRange(undefined, undefined));
     }
 
     // Create range from prefix to prefix + max char
-    const upperPrefix = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+    const upperPrefix =
+      prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
     return this.toCollection(keyRangeRange(prefix, upperPrefix, false, true));
   }
 
@@ -192,7 +193,7 @@ export class WhereClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
-        if (typeof value !== 'string') return false;
+        if (typeof value !== "string") return false;
         return value.toLowerCase().startsWith(lowerPrefix);
       },
       reverse: false,
@@ -214,7 +215,7 @@ export class WhereClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
-        if (typeof itemValue !== 'string') return false;
+        if (typeof itemValue !== "string") return false;
         return itemValue.toLowerCase() === lowerValue;
       },
       reverse: false,
@@ -249,7 +250,7 @@ export class WhereClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
-        if (typeof itemValue !== 'string') return false;
+        if (typeof itemValue !== "string") return false;
         return lowerValues.has(itemValue.toLowerCase());
       },
       reverse: false,
@@ -277,7 +278,8 @@ export class WhereClause<T, TKey> {
     }
 
     if (prefixes.length === 1) {
-      return this.startsWith(prefixes[0]);
+      const [prefix] = prefixes;
+      return this.startsWith(prefix as string);
     }
 
     // Use filter for multiple prefixes
@@ -287,7 +289,7 @@ export class WhereClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
-        if (typeof value !== 'string') return false;
+        if (typeof value !== "string") return false;
         return prefixes.some((prefix) => value.startsWith(prefix));
       },
       reverse: false,
@@ -322,7 +324,7 @@ export class WhereClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
-        if (typeof value !== 'string') return false;
+        if (typeof value !== "string") return false;
         const lowerValue = value.toLowerCase();
         return lowerPrefixes.some((prefix) => lowerValue.startsWith(prefix));
       },
@@ -338,7 +340,7 @@ export class WhereClause<T, TKey> {
    */
   inAnyRange(
     ranges: [unknown, unknown][],
-    options?: { includeLowers?: boolean; includeUppers?: boolean }
+    options?: { includeLowers?: boolean; includeUppers?: boolean },
   ): Collection<T, TKey> {
     if (ranges.length === 0) {
       // Empty ranges - return empty collection
@@ -358,7 +360,13 @@ export class WhereClause<T, TKey> {
 
     // For a single range, use between
     if (ranges.length === 1) {
-      return this.between(ranges[0][0], ranges[0][1], includeLowers, includeUppers);
+      const [range] = ranges;
+      return this.between(
+        (range as [unknown, unknown])[0],
+        (range as [unknown, unknown])[1],
+        includeLowers,
+        includeUppers,
+      );
     }
 
     // For multiple ranges, use filter with proper key comparison

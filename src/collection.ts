@@ -10,9 +10,9 @@ import type {
   DBCoreTransaction,
   DBCoreQueryRequest,
   DBCoreKeyRange,
-} from './dbcore/index.js';
-import { keyRangeRange } from './dbcore/index.js';
-import { compareKeys } from './compat/index.js';
+} from "./dbcore/index.js";
+import { keyRangeRange } from "./dbcore/index.js";
+import { compareKeys } from "./compat/index.js";
 
 /**
  * Collection context - stores query state.
@@ -50,7 +50,7 @@ export interface CollectionContext {
 export function createCollectionContext(table: DBCoreTable): CollectionContext {
   return {
     table,
-    index: '',
+    index: "",
     range: keyRangeRange(undefined, undefined),
     reverse: false,
     unique: false,
@@ -123,7 +123,10 @@ export class Collection<T, TKey> {
    * Reverse the query direction.
    */
   reverse(): Collection<T, TKey> {
-    return new Collection(cloneContext(this._ctx, { reverse: !this._ctx.reverse }), this._getTransaction);
+    return new Collection(
+      cloneContext(this._ctx, { reverse: !this._ctx.reverse }),
+      this._getTransaction,
+    );
   }
 
   /**
@@ -142,7 +145,7 @@ export class Collection<T, TKey> {
         until: predicate as (item: unknown) => boolean,
         includeStopItem,
       }),
-      this._getTransaction
+      this._getTransaction,
     );
   }
 
@@ -165,7 +168,7 @@ export class Collection<T, TKey> {
    */
   private async _executeContext(
     ctx: CollectionContext,
-    trans: DBCoreTransaction
+    trans: DBCoreTransaction,
   ): Promise<{ values: unknown[]; keys: unknown[] }> {
     // Only defer offset/limit to post-processing if we have filter or until
     const needsPostProcessing = !!(ctx.filter || ctx.until);
@@ -402,7 +405,7 @@ export class Collection<T, TKey> {
 
     // Extract nested property
     const getValue = (obj: unknown, path: string): unknown => {
-      const parts = path.split('.');
+      const parts = path.split(".");
       let value: unknown = obj;
       for (const part of parts) {
         if (value == null) return undefined;
@@ -426,7 +429,7 @@ export class Collection<T, TKey> {
     const ctx = this._ctx;
 
     if (ctx.orContexts && ctx.orContexts.length > 0) {
-      throw new Error('modify() does not support OR queries. Use toArray() and manual updates.');
+      throw new Error("modify() does not support OR queries. Use toArray() and manual updates.");
     }
 
     const trans = this._getTransaction();
@@ -470,15 +473,15 @@ export class Collection<T, TKey> {
     for (const value of values) {
       let modified: unknown;
 
-      if (typeof changes === 'function') {
+      if (typeof changes === "function") {
         const result = changes(value as T);
-        if (result && typeof result === 'object') {
-          modified = { ...value as object, ...result };
+        if (result && typeof result === "object") {
+          modified = { ...(value as object), ...result };
         } else {
           modified = value;
         }
       } else {
-        modified = { ...value as object, ...changes };
+        modified = { ...(value as object), ...changes };
       }
 
       modifiedValues.push(modified);
@@ -487,7 +490,7 @@ export class Collection<T, TKey> {
     // Put all modified values
     if (modifiedValues.length > 0) {
       await ctx.table.mutate(trans, {
-        type: 'put',
+        type: "put",
         values: modifiedValues,
         keys: keys,
       });
@@ -504,7 +507,7 @@ export class Collection<T, TKey> {
     const ctx = this._ctx;
 
     if (ctx.orContexts && ctx.orContexts.length > 0) {
-      throw new Error('delete() does not support OR queries. Use primaryKeys() and bulkDelete().');
+      throw new Error("delete() does not support OR queries. Use primaryKeys() and bulkDelete().");
     }
 
     const trans = this._getTransaction();
@@ -516,7 +519,7 @@ export class Collection<T, TKey> {
       const count = await ctx.table.count(trans, ctx.range);
 
       await ctx.table.mutate(trans, {
-        type: 'deleteRange',
+        type: "deleteRange",
         range: ctx.range,
       });
 
@@ -555,7 +558,7 @@ export class Collection<T, TKey> {
 
     if (keys.length > 0) {
       await ctx.table.mutate(trans, {
-        type: 'delete',
+        type: "delete",
         keys,
       });
     }
@@ -584,11 +587,13 @@ export class OrClause<T, TKey> {
    */
   private createOrCollection(additionalCtx: CollectionContext): Collection<T, TKey> {
     const baseCtx = this.baseCollection._ctx;
-    const orContexts = baseCtx.orContexts ? [...baseCtx.orContexts, additionalCtx] : [additionalCtx];
+    const orContexts = baseCtx.orContexts
+      ? [...baseCtx.orContexts, additionalCtx]
+      : [additionalCtx];
 
     return new Collection<T, TKey>(
       cloneContext(baseCtx, { orContexts }),
-      this.baseCollection._getTransaction
+      this.baseCollection._getTransaction,
     );
   }
 
@@ -596,7 +601,7 @@ export class OrClause<T, TKey> {
    * Get the indexed value from an item.
    */
   private getIndexValue(item: unknown): unknown {
-    if (!item || typeof item !== 'object') return undefined;
+    if (!item || typeof item !== "object") return undefined;
     const ctx = this.baseCollection._ctx;
 
     if (!this.indexName) {
@@ -707,7 +712,12 @@ export class OrClause<T, TKey> {
     });
   }
 
-  between(lower: unknown, upper: unknown, includeLower = true, includeUpper = false): Collection<T, TKey> {
+  between(
+    lower: unknown,
+    upper: unknown,
+    includeLower = true,
+    includeUpper = false,
+  ): Collection<T, TKey> {
     const ctx = this.baseCollection._ctx;
     return this.createOrCollection({
       table: ctx.table,
@@ -720,7 +730,7 @@ export class OrClause<T, TKey> {
 
   startsWith(prefix: string): Collection<T, TKey> {
     const ctx = this.baseCollection._ctx;
-    if (prefix === '') {
+    if (prefix === "") {
       return this.createOrCollection({
         table: ctx.table,
         index: this.indexName,
@@ -729,7 +739,8 @@ export class OrClause<T, TKey> {
         unique: false,
       });
     }
-    const upperPrefix = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+    const upperPrefix =
+      prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
     return this.createOrCollection({
       table: ctx.table,
       index: this.indexName,
@@ -748,7 +759,7 @@ export class OrClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
-        if (typeof value !== 'string') return false;
+        if (typeof value !== "string") return false;
         return value.toLowerCase().startsWith(lowerPrefix);
       },
       reverse: false,
@@ -765,7 +776,7 @@ export class OrClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
-        if (typeof itemValue !== 'string') return false;
+        if (typeof itemValue !== "string") return false;
         return itemValue.toLowerCase() === lowerValue;
       },
       reverse: false,
@@ -785,7 +796,7 @@ export class OrClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const itemValue = this.getIndexValue(item);
-        if (typeof itemValue !== 'string') return false;
+        if (typeof itemValue !== "string") return false;
         return lowerValues.has(itemValue.toLowerCase());
       },
       reverse: false,
@@ -798,7 +809,8 @@ export class OrClause<T, TKey> {
       return this.baseCollection; // No additional matches
     }
     if (prefixes.length === 1) {
-      return this.startsWith(prefixes[0]);
+      const [prefix] = prefixes;
+      return this.startsWith(prefix as string);
     }
     const ctx = this.baseCollection._ctx;
     return this.createOrCollection({
@@ -807,7 +819,7 @@ export class OrClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
-        if (typeof value !== 'string') return false;
+        if (typeof value !== "string") return false;
         return prefixes.some((prefix) => value.startsWith(prefix));
       },
       reverse: false,
@@ -827,7 +839,7 @@ export class OrClause<T, TKey> {
       range: keyRangeRange(undefined, undefined),
       filter: (item: unknown) => {
         const value = this.getIndexValue(item);
-        if (typeof value !== 'string') return false;
+        if (typeof value !== "string") return false;
         const lowerValue = value.toLowerCase();
         return lowerPrefixes.some((prefix) => lowerValue.startsWith(prefix));
       },
@@ -838,7 +850,7 @@ export class OrClause<T, TKey> {
 
   inAnyRange(
     ranges: [unknown, unknown][],
-    options?: { includeLowers?: boolean; includeUppers?: boolean }
+    options?: { includeLowers?: boolean; includeUppers?: boolean },
   ): Collection<T, TKey> {
     if (ranges.length === 0) {
       return this.baseCollection; // No additional matches
@@ -847,7 +859,13 @@ export class OrClause<T, TKey> {
     const includeUppers = options?.includeUppers ?? false;
 
     if (ranges.length === 1) {
-      return this.between(ranges[0][0], ranges[0][1], includeLowers, includeUppers);
+      const [range] = ranges;
+      return this.between(
+        (range as [unknown, unknown])[0],
+        (range as [unknown, unknown])[1],
+        includeLowers,
+        includeUppers,
+      );
     }
 
     const ctx = this.baseCollection._ctx;

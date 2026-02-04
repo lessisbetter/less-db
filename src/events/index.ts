@@ -8,4 +8,4 @@ export {
   type DatabaseChange,
   type DatabaseEvents,
   type TableHooks,
-} from './events.js';
+} from "./events.js";

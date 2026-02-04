@@ -15,7 +15,7 @@
  *   '++id, &email'   - Primary key + unique email index
  */
 
-import { SchemaError } from './errors/index.js';
+import { SchemaError } from "./errors/index.js";
 
 /**
  * Specification for a single index or primary key.
@@ -68,21 +68,21 @@ function parseIndexSpec(spec: string, isPrimaryKey: boolean): IndexSpec {
   let outbound = false;
 
   // Check for auto-increment prefix
-  if (name.startsWith('++')) {
+  if (name.startsWith("++")) {
     auto = true;
     name = name.slice(2);
   }
 
   // Check for unique prefix
-  if (name.startsWith('&')) {
+  if (name.startsWith("&")) {
     unique = true;
     name = name.slice(1);
   }
 
   // If name is empty after removing prefixes, it's an outbound key
-  if (name === '') {
+  if (name === "") {
     if (!isPrimaryKey) {
-      throw new SchemaError('Empty index name is only valid for primary key');
+      throw new SchemaError("Empty index name is only valid for primary key");
     }
     outbound = true;
   }
@@ -93,7 +93,7 @@ function parseIndexSpec(spec: string, isPrimaryKey: boolean): IndexSpec {
   }
 
   return {
-    name: name || '',
+    name: name || "",
     keyPath: outbound ? null : name,
     isPrimaryKey,
     auto,
@@ -110,20 +110,22 @@ function parseIndexSpec(spec: string, isPrimaryKey: boolean): IndexSpec {
  * @returns Parsed table schema
  */
 export function parseTableSchema(tableName: string, schemaString: string): TableSchema {
-  const parts = schemaString.split(',').map((s) => s.trim());
+  const parts = schemaString.split(",").map((s) => s.trim());
 
-  if (parts.length === 0 || (parts.length === 1 && parts[0] === '')) {
+  const [primaryKeySpec, ...indexSpecs] = parts;
+
+  if (!primaryKeySpec || primaryKeySpec === "") {
     throw new SchemaError(`Empty schema for table "${tableName}"`);
   }
 
   // First part is always the primary key
-  const primaryKey = parseIndexSpec(parts[0], true);
+  const primaryKey = parseIndexSpec(primaryKeySpec, true);
 
   // Rest are secondary indexes
   const indexes: IndexSpec[] = [];
-  for (let i = 1; i < parts.length; i++) {
-    if (parts[i] === '') continue;
-    indexes.push(parseIndexSpec(parts[i], false));
+  for (const part of indexSpecs) {
+    if (part === "") continue;
+    indexes.push(parseIndexSpec(part, false));
   }
 
   return {
@@ -192,22 +194,19 @@ export function getIndex(schema: TableSchema, name: string): IndexSpec | undefin
  * Returns list of changes needed.
  */
 export interface SchemaChange {
-  type: 'add-table' | 'delete-table' | 'add-index' | 'delete-index' | 'change-primary-key';
+  type: "add-table" | "delete-table" | "add-index" | "delete-index" | "change-primary-key";
   tableName: string;
   indexName?: string;
   spec?: IndexSpec;
 }
 
-export function diffSchemas(
-  oldSchema: DatabaseSchema,
-  newSchema: DatabaseSchema
-): SchemaChange[] {
+export function diffSchemas(oldSchema: DatabaseSchema, newSchema: DatabaseSchema): SchemaChange[] {
   const changes: SchemaChange[] = [];
 
   // Check for deleted tables
   for (const tableName of Object.keys(oldSchema)) {
     if (!(tableName in newSchema)) {
-      changes.push({ type: 'delete-table', tableName });
+      changes.push({ type: "delete-table", tableName });
     }
   }
 
@@ -216,7 +215,7 @@ export function diffSchemas(
     const oldTable = oldSchema[tableName];
 
     if (!oldTable) {
-      changes.push({ type: 'add-table', tableName });
+      changes.push({ type: "add-table", tableName });
       continue;
     }
 
@@ -225,14 +224,14 @@ export function diffSchemas(
       oldTable.primaryKey.keyPath !== newTable.primaryKey.keyPath ||
       oldTable.primaryKey.auto !== newTable.primaryKey.auto
     ) {
-      changes.push({ type: 'change-primary-key', tableName });
+      changes.push({ type: "change-primary-key", tableName });
     }
 
     // Check for deleted indexes
     for (const oldIdx of oldTable.indexes) {
       const newIdx = newTable.indexes.find((i) => i.name === oldIdx.name);
       if (!newIdx) {
-        changes.push({ type: 'delete-index', tableName, indexName: oldIdx.name });
+        changes.push({ type: "delete-index", tableName, indexName: oldIdx.name });
       }
     }
 
@@ -241,7 +240,7 @@ export function diffSchemas(
       const oldIdx = oldTable.indexes.find((i) => i.name === newIdx.name);
       if (!oldIdx) {
         changes.push({
-          type: 'add-index',
+          type: "add-index",
           tableName,
           indexName: newIdx.name,
           spec: newIdx,

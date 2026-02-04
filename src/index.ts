@@ -5,19 +5,15 @@
  */
 
 // Main database class
-export { LessDB, createLessDB, type Middleware } from './less-db.js';
+export { LessDB, createLessDB, type Middleware } from "./less-db.js";
 
 // Table and query classes
-export { Table } from './table.js';
-export { Collection } from './collection.js';
-export { WhereClause } from './where-clause.js';
+export { Table } from "./table.js";
+export { Collection } from "./collection.js";
+export { WhereClause } from "./where-clause.js";
 
 // Transaction
-export {
-  type Transaction,
-  type TxMode,
-  TransactionContext,
-} from './transaction.js';
+export { type Transaction, type TxMode, TransactionContext } from "./transaction.js";
 
 // Schema
 export {
@@ -26,7 +22,7 @@ export {
   type TableSchema,
   type IndexSpec,
   type DatabaseSchema,
-} from './schema-parser.js';
+} from "./schema-parser.js";
 
 // Events and hooks
 export {
@@ -39,7 +35,7 @@ export {
   type DatabaseChange,
   type DatabaseEvents,
   type TableHooks,
-} from './events/index.js';
+} from "./events/index.js";
 
 // Errors
 export {
@@ -55,7 +51,7 @@ export {
   BlockedError,
   VersionChangeError,
   mapError,
-} from './errors/index.js';
+} from "./errors/index.js";
 
 // DBCore (for advanced use / middleware)
 export {
@@ -76,7 +72,7 @@ export {
   keyRangeAbove,
   keyRangeBelow,
   createIDBCore,
-} from './dbcore/index.js';
+} from "./dbcore/index.js";
 
 // Compatibility utilities
 export {
@@ -85,4 +81,4 @@ export {
   compareKeys,
   getValueType,
   browserEnv,
-} from './compat/index.js';
+} from "./compat/index.js";
