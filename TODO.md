@@ -1,10 +1,16 @@
 # LessDB - Project Status
 
-A minimal, extensible IndexedDB wrapper inspired by [Dexie.js](https://dexie.org/).
+A minimal, extensible IndexedDB wrapper with **full API compatibility with [Dexie.js](https://dexie.org/)**.
 
 ## Overview
 
-LessDB aims to provide a simple, type-safe API for IndexedDB while maintaining extensibility for features like reactivity and sync. It borrows many patterns from Dexie.js but focuses on simplicity (~1000 lines for core functionality).
+LessDB is a drop-in replacement for Dexie.js for common use cases. It provides the same API so you can migrate from Dexie with minimal code changes—typically just changing the import.
+
+**Design Goals:**
+1. **Dexie-Compatible** - Same API, easy migration
+2. **Simple** - Core functionality in ~1000 lines
+3. **Extensible** - Hooks and middleware for reactivity, encryption, sync
+4. **Typed** - First-class TypeScript support
 
 **Current Status**: Phase 1 & 2 complete, Phase 3 partial
 

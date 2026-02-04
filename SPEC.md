@@ -7,10 +7,12 @@ A minimal, extensible IndexedDB wrapper inspired by [Dexie.js](https://dexie.org
 ## Design Goals
 
 1. **Simple** - Core API covers 90% of use cases in ~1000 lines
-2. **Familiar** - API-compatible with Dexie.js where practical
+2. **Dexie-Compatible** - API-compatible with Dexie.js for easy migration
 3. **Extensible** - Hook points for middleware, reactivity, and sync
 4. **Reliable** - Include Dexie's browser compatibility fixes
 5. **Typed** - First-class TypeScript support
+
+> **API Compatibility**: LessDB aims to be a drop-in replacement for Dexie.js for common use cases. Code written for Dexie should work with LessDB with minimal changes. We intentionally match Dexie's method names, signatures, and behaviors.
 
 ## Non-Goals (for v1)
 
@@ -605,20 +607,45 @@ db.use(syncMiddleware({
 
 ## API Compatibility with Dexie
 
+**Goal**: LessDB should be a drop-in replacement for Dexie.js in common use cases. Migrating from Dexie to LessDB should require minimal code changes.
+
+### Compatibility Matrix
+
 | Feature | LessDB | Dexie | Notes |
 |---------|--------|-------|-------|
-| `new DB(name)` | ✅ | ✅ | Same |
-| `db.version(n).stores({})` | ✅ | ✅ | Same |
-| `db.table.get/add/put/delete` | ✅ | ✅ | Same |
-| `db.table.where().equals()` | ✅ | ✅ | Same |
-| `collection.and().limit()` | ✅ | ✅ | Same |
-| `db.transaction()` | ✅ | ✅ | Same |
-| `liveQuery()` | ❌ Phase 4 | ✅ | Later |
-| `db.table.hook` | ✅ Phase 3 | ✅ | Same API |
-| `db.use(middleware)` | ✅ Phase 3 | ✅ | Compatible |
-| Compound indexes | ❌ | ✅ | Not planned |
-| Multi-entry indexes | ❌ | ✅ | Not planned |
+| `new DB(name)` | ✅ | ✅ | Identical |
+| `db.version(n).stores({})` | ✅ | ✅ | Identical |
+| `db.table.get/add/put/delete` | ✅ | ✅ | Identical |
+| `db.table.bulkGet/bulkAdd/bulkPut/bulkDelete` | ✅ | ✅ | Identical |
+| `db.table.where().equals()` | ✅ | ✅ | Identical |
+| `db.table.where().above/below/between()` | ✅ | ✅ | Identical |
+| `db.table.where().anyOf/noneOf()` | ✅ | ✅ | Identical |
+| `db.table.where().startsWith()` | ✅ | ✅ | Identical |
+| `collection.filter().limit().offset()` | ✅ | ✅ | Identical |
+| `collection.first/last/count/toArray()` | ✅ | ✅ | Identical |
+| `collection.modify/delete()` | ✅ | ✅ | Identical |
+| `db.transaction('rw', [...], fn)` | ✅ | ✅ | Identical |
+| `db.table.hook.creating/reading/etc` | ✅ | ✅ | Identical |
+| `db.on('ready'/'close'/etc)` | ✅ | ✅ | Identical |
+| `db.use(middleware)` | 🚧 | ✅ | Planned |
+| `liveQuery()` | ❌ | ✅ | Not planned for v1 |
+| Compound indexes `[a+b]` | ❌ | ✅ | Not planned for v1 |
+| Multi-entry indexes `*tags` | ❌ | ✅ | Not planned for v1 |
 | Entity classes | ❌ | ✅ | Not planned |
+
+### Migration from Dexie
+
+```typescript
+// Before (Dexie)
+import Dexie from 'dexie';
+const db = new Dexie('MyApp');
+
+// After (LessDB)
+import { LessDB } from 'less-db';
+const db = new LessDB('MyApp');
+
+// Everything else stays the same!
+```
 
 ---
 
