@@ -566,6 +566,80 @@ describe('DBCore', () => {
     });
   });
 
+  describe('error handling', () => {
+    it('reports failure for write operations on readonly transaction', async () => {
+      const trans = core.transaction(['users'], 'readonly');
+      const table = core.table('users');
+
+      // DBCore returns failures in response rather than rejecting
+      const result = await table.mutate(trans, {
+        type: 'add',
+        values: [{ name: 'Test', email: 'test@test.com', age: 20 }],
+      });
+
+      expect(result.numFailures).toBe(1);
+      expect(result.failures).toBeDefined();
+      expect(result.failures![0]).toBeInstanceOf(Error);
+      expect(result.failures![0].message).toContain('readonly');
+    });
+
+    // Note: get with non-existent key is already tested in describe('get')
+
+    it('handles getMany with empty array', async () => {
+      const trans = core.transaction(['users'], 'readonly');
+      const table = core.table('users');
+
+      const result = await table.getMany(trans, []);
+      expect(result).toEqual([]);
+    });
+
+    it('handles mutate delete with empty keys array', async () => {
+      const trans = core.transaction(['users'], 'readwrite');
+      const table = core.table('users');
+
+      const result = await table.mutate(trans, {
+        type: 'delete',
+        keys: [],
+      });
+
+      expect(result.numFailures).toBe(0);
+    });
+
+    it('handles mutate add with empty values array', async () => {
+      const trans = core.transaction(['users'], 'readwrite');
+      const table = core.table('users');
+
+      const result = await table.mutate(trans, {
+        type: 'add',
+        values: [],
+      });
+
+      expect(result.numFailures).toBe(0);
+      expect(result.results).toEqual([]);
+    });
+
+    it('handles count on empty table', async () => {
+      const trans = core.transaction(['users'], 'readonly');
+      const table = core.table('users');
+
+      const count = await table.count(trans);
+      expect(count).toBe(0);
+    });
+
+    it('handles query on empty table', async () => {
+      const trans = core.transaction(['users'], 'readonly');
+      const table = core.table('users');
+
+      const result = await table.query(trans, {
+        index: '',
+        range: keyRangeRange(undefined, undefined),
+      });
+
+      expect(result.values).toEqual([]);
+      expect(result.keys).toEqual([]);
+    });
+  });
+
   describe('key range helpers', () => {
     it('keyRangeEqual creates equal range', () => {
       const range = keyRangeEqual('test');

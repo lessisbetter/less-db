@@ -1,5 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { LessDB, ConstraintError, InvalidStateError } from './index.js';
+import {
+  LessDB,
+  ConstraintError,
+  InvalidStateError,
+  type Middleware,
+  type DBCore,
+  type DBCoreTable,
+  type DBCoreTransaction,
+  type DBCoreMutateRequest,
+} from './index.js';
 
 interface User {
   id?: number;
@@ -188,13 +197,13 @@ describe('LessDB', () => {
         expect(id).toBeGreaterThan(0);
       });
 
-      it('fails on duplicate unique index', async () => {
+      it('fails on duplicate unique index with ConstraintError', async () => {
         const users = db.table<User, number>('users');
         await users.add({ name: 'Alice', email: 'alice@test.com', age: 30 });
 
         await expect(
           users.add({ name: 'Bob', email: 'alice@test.com', age: 25 })
-        ).rejects.toThrow();
+        ).rejects.toThrow(ConstraintError);
       });
 
       it('adds item with explicit key', async () => {
@@ -1093,10 +1102,10 @@ describe('LessDB', () => {
     it('registers middleware', async () => {
       let middlewareCalled = false;
 
-      const middleware = {
+      const middleware: Middleware = {
         name: 'test-middleware',
         level: 1,
-        create: (downCore: any) => {
+        create: (downCore: DBCore): DBCore => {
           middlewareCalled = true;
           return downCore;
         },
@@ -1111,31 +1120,30 @@ describe('LessDB', () => {
     it('allows middleware to wrap operations', async () => {
       const operations: string[] = [];
 
-      const middleware = {
+      const middleware: Middleware = {
         name: 'logging-middleware',
-        create: (downCore: any) => {
-          // Properly wrap the core, preserving all methods
-          const wrappedTables = new Map();
+        create: (downCore: DBCore): DBCore => {
+          const wrappedTables = new Map<string, DBCoreTable>();
 
           return {
             tables: downCore.tables,
-            transaction: (tables: string[], mode: string) => downCore.transaction(tables, mode),
-            table: (name: string) => {
+            transaction: (tables, mode) => downCore.transaction(tables, mode),
+            table: (name: string): DBCoreTable => {
               if (!wrappedTables.has(name)) {
                 const downTable = downCore.table(name);
                 wrappedTables.set(name, {
                   ...downTable,
-                  get: async (trans: any, key: any) => {
+                  get: async (trans: DBCoreTransaction, key: unknown) => {
                     operations.push(`get:${name}:${key}`);
                     return downTable.get(trans, key);
                   },
-                  mutate: async (trans: any, req: any) => {
+                  mutate: async (trans: DBCoreTransaction, req: DBCoreMutateRequest) => {
                     operations.push(`mutate:${name}:${req.type}`);
                     return downTable.mutate(trans, req);
                   },
                 });
               }
-              return wrappedTables.get(name);
+              return wrappedTables.get(name)!;
             },
           };
         },
@@ -1155,9 +1163,9 @@ describe('LessDB', () => {
     it('unregisters middleware', async () => {
       let middlewareCalled = false;
 
-      const middleware = {
+      const middleware: Middleware = {
         name: 'test-middleware',
-        create: (downCore: any) => {
+        create: (downCore: DBCore): DBCore => {
           middlewareCalled = true;
           return downCore;
         },
@@ -1174,28 +1182,107 @@ describe('LessDB', () => {
     it('applies middleware in level order', async () => {
       const order: string[] = [];
 
-      db.use({
+      const highLevel: Middleware = {
         name: 'high-level',
         level: 10,
-        create: (downCore: any) => {
+        create: (downCore: DBCore): DBCore => {
           order.push('high');
           return downCore;
         },
-      });
+      };
 
-      db.use({
+      const lowLevel: Middleware = {
         name: 'low-level',
         level: 1,
-        create: (downCore: any) => {
+        create: (downCore: DBCore): DBCore => {
           order.push('low');
           return downCore;
         },
-      });
+      };
+
+      db.use(highLevel);
+      db.use(lowLevel);
 
       await db.open();
 
       // Low level should be applied first (closer to IndexedDB)
       expect(order).toEqual(['low', 'high']);
+    });
+  });
+
+  describe('empty input handling', () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: '++id, name, age',
+      });
+      await db.open();
+    });
+
+    it('bulkAdd with empty array returns empty keys', async () => {
+      const users = db.table<User, number>('users');
+      const keys = await users.bulkAdd([]);
+      expect(keys).toEqual([]);
+    });
+
+    it('bulkGet with empty array returns empty array', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.bulkGet([]);
+      expect(results).toEqual([]);
+    });
+
+    it('bulkPut with empty array returns empty keys', async () => {
+      const users = db.table<User, number>('users');
+      const keys = await users.bulkPut([]);
+      expect(keys).toEqual([]);
+    });
+
+    it('bulkDelete with empty array succeeds', async () => {
+      const users = db.table<User, number>('users');
+      await users.add({ name: 'Alice', email: 'a@test.com', age: 30 });
+
+      await users.bulkDelete([]);
+
+      // Original data should still exist
+      const count = await users.count();
+      expect(count).toBe(1);
+    });
+
+    it('anyOf with empty array returns no results', async () => {
+      const users = db.table<User, number>('users');
+      await users.add({ name: 'Alice', email: 'a@test.com', age: 30 });
+
+      const results = await users.where('age').anyOf([]).toArray();
+      expect(results).toEqual([]);
+    });
+
+    it('toArray on empty table returns empty array', async () => {
+      const users = db.table<User, number>('users');
+      const results = await users.toArray();
+      expect(results).toEqual([]);
+    });
+
+    it('count on empty table returns 0', async () => {
+      const users = db.table<User, number>('users');
+      const count = await users.count();
+      expect(count).toBe(0);
+    });
+
+    it('first on empty table returns undefined', async () => {
+      const users = db.table<User, number>('users');
+      const first = await users.toCollection().first();
+      expect(first).toBeUndefined();
+    });
+
+    it('last on empty table returns undefined', async () => {
+      const users = db.table<User, number>('users');
+      const last = await users.toCollection().last();
+      expect(last).toBeUndefined();
+    });
+
+    it('primaryKeys on empty table returns empty array', async () => {
+      const users = db.table<User, number>('users');
+      const keys = await users.toCollection().primaryKeys();
+      expect(keys).toEqual([]);
     });
   });
 

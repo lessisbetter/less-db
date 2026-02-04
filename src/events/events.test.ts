@@ -55,15 +55,17 @@ describe('events', () => {
       // Suppress console.error for this test
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      event.subscribe(errorListener);
-      event.subscribe(normalListener);
-      event.fire();
+      try {
+        event.subscribe(errorListener);
+        event.subscribe(normalListener);
+        event.fire();
 
-      expect(errorListener).toHaveBeenCalled();
-      expect(normalListener).toHaveBeenCalled(); // Still called despite error
-      expect(consoleSpy).toHaveBeenCalled();
-
-      consoleSpy.mockRestore();
+        expect(errorListener).toHaveBeenCalled();
+        expect(normalListener).toHaveBeenCalled(); // Still called despite error
+        expect(consoleSpy).toHaveBeenCalled();
+      } finally {
+        consoleSpy.mockRestore();
+      }
     });
 
     it('reports hasListeners correctly', () => {
@@ -136,6 +138,24 @@ describe('events', () => {
 
       const result = hook.fire(5);
       expect(result).toBe(15); // 5 * 3 from last handler
+    });
+
+    it('handlers receive original input, not chained values', () => {
+      const hook = new Hook<[number], number>();
+      const receivedValues: number[] = [];
+
+      hook.subscribe((n) => {
+        receivedValues.push(n);
+        return n * 2;
+      });
+      hook.subscribe((n) => {
+        receivedValues.push(n);
+        return n * 3;
+      });
+
+      hook.fire(5);
+      // Both handlers receive the original input value
+      expect(receivedValues).toEqual([5, 5]);
     });
 
     it('skips undefined returns', () => {

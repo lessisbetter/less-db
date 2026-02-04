@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   parseTableSchema,
   parseStores,
@@ -116,9 +116,15 @@ describe('schema-parser', () => {
         expect(() => parseTableSchema('users', '   ')).toThrow(SchemaError);
       });
 
-      it('throws on empty index name', () => {
-        expect(() => parseTableSchema('users', 'id, ')).not.toThrow(); // Trailing comma ok
-        expect(() => parseTableSchema('users', 'id, , name')).not.toThrow(); // Empty skipped
+      it('skips empty index names gracefully', () => {
+        // Trailing comma is ok - empty segment is skipped
+        const trailingComma = parseTableSchema('users', 'id, ');
+        expect(trailingComma.indexes).toHaveLength(0);
+
+        // Empty middle segment is skipped
+        const emptyMiddle = parseTableSchema('users', 'id, , name');
+        expect(emptyMiddle.indexes).toHaveLength(1);
+        expect(emptyMiddle.indexes[0].name).toBe('name');
       });
     });
 
@@ -324,6 +330,50 @@ describe('schema-parser', () => {
 
       const changes = diffSchemas(old, next);
       expect(changes).toHaveLength(0);
+    });
+
+    it('handles both schemas empty', () => {
+      const changes = diffSchemas({}, {});
+      expect(changes).toHaveLength(0);
+    });
+
+    it('does not detect index property changes (same name)', () => {
+      // Note: diffSchemas currently only compares index names, not properties.
+      // Changing uniqueness on an existing index is not detected as a change.
+      // This is a known limitation - full index property diffing would require
+      // comparing unique, keyPath, etc. and generating modify-index changes.
+      const old: DatabaseSchema = {
+        users: parseTableSchema('users', '++id, email'),
+      };
+      const next: DatabaseSchema = {
+        users: parseTableSchema('users', '++id, &email'),
+      };
+
+      const changes = diffSchemas(old, next);
+      // No changes detected because index name 'email' exists in both
+      expect(changes).toHaveLength(0);
+    });
+
+    it('handles adding table to empty schema', () => {
+      const old: DatabaseSchema = {};
+      const next: DatabaseSchema = {
+        users: parseTableSchema('users', '++id'),
+      };
+
+      const changes = diffSchemas(old, next);
+      expect(changes).toHaveLength(1);
+      expect(changes[0].type).toBe('add-table');
+    });
+
+    it('handles removing all tables', () => {
+      const old: DatabaseSchema = {
+        users: parseTableSchema('users', '++id'),
+      };
+      const next: DatabaseSchema = {};
+
+      const changes = diffSchemas(old, next);
+      expect(changes).toHaveLength(1);
+      expect(changes[0].type).toBe('delete-table');
     });
   });
 });

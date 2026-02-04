@@ -249,6 +249,48 @@ describe('compat', () => {
         expect(compareKeys(a, d)).toBe(1);
       });
     });
+
+    describe('edge cases', () => {
+      it('compares empty arrays', () => {
+        expect(compareKeys([], [])).toBe(0);
+        expect(compareKeys([], [1])).toBe(-1);
+        expect(compareKeys([1], [])).toBe(1);
+      });
+
+      it('handles Infinity values', () => {
+        expect(compareKeys(Infinity, -Infinity)).toBe(1);
+        expect(compareKeys(-Infinity, 0)).toBe(-1);
+        expect(compareKeys(Infinity, Infinity)).toBe(0);
+        expect(compareKeys(-Infinity, -Infinity)).toBe(0);
+      });
+
+      it('handles very large numbers', () => {
+        const large = Number.MAX_SAFE_INTEGER;
+        const larger = large + 1;
+        expect(compareKeys(large, larger)).toBe(-1);
+        expect(compareKeys(larger, large)).toBe(1);
+      });
+
+      it('handles empty strings', () => {
+        expect(compareKeys('', '')).toBe(0);
+        expect(compareKeys('', 'a')).toBe(-1);
+        expect(compareKeys('a', '')).toBe(1);
+      });
+
+      it('handles nested arrays', () => {
+        expect(compareKeys([1, [2]], [1, [2]])).toBe(0);
+        expect(compareKeys([1, [2]], [1, [3]])).toBe(-1);
+        expect(compareKeys([[1], 2], [[1], 3])).toBe(-1);
+      });
+
+      it('handles empty binary data', () => {
+        const empty = new Uint8Array([]);
+        const nonEmpty = new Uint8Array([1]);
+        expect(compareKeys(empty, empty)).toBe(0);
+        expect(compareKeys(empty, nonEmpty)).toBe(-1);
+        expect(compareKeys(nonEmpty, empty)).toBe(1);
+      });
+    });
   });
 
   describe('browserEnv', () => {
