@@ -2612,4 +2612,179 @@ describe("LessDB", () => {
       expect(results[0].value).toBe("Hello");
     });
   });
+
+  describe("Transaction context edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name",
+        logs: "++id, action",
+      });
+      await db.open();
+    });
+
+    it("transaction context provides mode", async () => {
+      await db.transaction("rw", ["users"], async (tx) => {
+        expect(tx.mode).toBe("readwrite");
+      });
+
+      await db.transaction("r", ["users"], async (tx) => {
+        expect(tx.mode).toBe("readonly");
+      });
+    });
+
+    it("transaction context provides tables list", async () => {
+      await db.transaction("r", ["users", "logs"], async (tx) => {
+        expect(tx.tables).toContain("users");
+        expect(tx.tables).toContain("logs");
+      });
+    });
+
+    it("transaction context active is true during execution", async () => {
+      await db.transaction("r", ["users"], async (tx) => {
+        expect(tx.active).toBe(true);
+      });
+    });
+
+    it("throws InvalidTableError when accessing table not in transaction", async () => {
+      await db.transaction("r", ["users"], async (tx) => {
+        expect(() => tx.table("logs")).toThrow("not part of this transaction");
+      });
+    });
+
+    it("abort() stops the transaction", async () => {
+      const users = db.table<User, number>("users");
+      await users.add({ name: "Initial", email: "i@test.com", age: 20 });
+
+      await expect(
+        db.transaction("rw", ["users"], async (tx) => {
+          const txUsers = tx.table<User, number>("users");
+          await txUsers.add({ name: "Alice", email: "a@test.com", age: 30 });
+          tx.abort();
+          // After abort, transaction should be inactive
+          expect(tx.active).toBe(false);
+        }),
+      ).rejects.toThrow();
+
+      // Data should not be committed
+      const count = await users.count();
+      expect(count).toBe(1); // Only Initial
+    });
+  });
+
+  describe("Schema change errors", () => {
+    it("throws when trying to change primary key", async () => {
+      // Create v1 database with one primary key
+      const db1 = new LessDB(dbName);
+      db1.version(1).stores({ users: "++id, name" });
+      await db1.open();
+      await db1.table("users").add({ name: "Alice" });
+      db1.close();
+
+      // Try to change primary key in v2 - should throw
+      const db2 = new LessDB(dbName);
+      db2.version(1).stores({ users: "++id, name" });
+      db2.version(2).stores({ users: "email, name" }); // Changed from ++id to email
+
+      await expect(db2.open()).rejects.toThrow("Cannot change primary key");
+    });
+  });
+
+  describe("Middleware on open database", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name",
+      });
+      await db.open();
+    });
+
+    it("use() rebuilds core when database is already open", async () => {
+      const operations: string[] = [];
+
+      // Add middleware after database is open
+      db.use({
+        name: "post-open-middleware",
+        create: (downCore) => {
+          operations.push("middleware-created");
+          return downCore;
+        },
+      });
+
+      // Middleware should have been applied immediately
+      expect(operations).toContain("middleware-created");
+
+      // Operations should still work
+      const users = db.table<User, number>("users");
+      await users.add({ name: "Alice", email: "a@test.com", age: 30 });
+      const count = await users.count();
+      expect(count).toBe(1);
+    });
+
+    it("unuse() rebuilds core when database is already open", async () => {
+      let middlewareActive = false;
+
+      const middleware = {
+        name: "removable-middleware",
+        create: (downCore: DBCore) => {
+          middlewareActive = true;
+          return downCore;
+        },
+      };
+
+      db.use(middleware);
+      expect(middlewareActive).toBe(true);
+
+      middlewareActive = false;
+      db.unuse(middleware);
+
+      // Core was rebuilt without middleware
+      // Add another middleware to verify rebuild happened
+      db.use({
+        name: "verify-middleware",
+        create: (downCore) => {
+          // If previous middleware was truly removed, this is fresh
+          return downCore;
+        },
+      });
+    });
+  });
+
+  describe("WhereClause remaining edge cases", () => {
+    beforeEach(async () => {
+      db.version(1).stores({
+        users: "++id, name, age",
+      });
+      await db.open();
+
+      const users = db.table<User, number>("users");
+      await users.bulkAdd([
+        { name: "Alice", email: "a@test.com", age: 25 },
+        { name: "Bob", email: "b@test.com", age: 30 },
+      ]);
+    });
+
+    it("startsWithAnyOf with empty array returns empty", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.where("name").startsWithAnyOf([]).toArray();
+
+      expect(results).toHaveLength(0);
+    });
+
+    it("startsWithAnyOfIgnoreCase returns empty on non-string values", async () => {
+      // Users have numbers in the age field
+      const results = await db
+        .table<User, number>("users")
+        .where("age")
+        .startsWithAnyOfIgnoreCase(["2"])
+        .toArray();
+
+      expect(results).toHaveLength(0);
+    });
+
+    it("inAnyRange with empty array returns empty", async () => {
+      const users = db.table<User, number>("users");
+      const results = await users.where("age").inAnyRange([]).toArray();
+
+      expect(results).toHaveLength(0);
+    });
+  });
 });

@@ -11,6 +11,8 @@ import {
   fixUndefinedKey,
   compareKeys,
   browserEnv,
+  safeStopPropagation,
+  safePreventDefault,
 } from "./index.js";
 
 describe("compat", () => {
@@ -300,6 +302,81 @@ describe("compat", () => {
       expect(typeof browserEnv.isFirefox).toBe("boolean");
       expect(typeof browserEnv.isChrome).toBe("boolean");
       expect(typeof browserEnv.isEdge).toBe("boolean");
+    });
+  });
+
+  describe("safeStopPropagation", () => {
+    it("calls stopPropagation when available", () => {
+      let called = false;
+      const event = {
+        stopPropagation: () => {
+          called = true;
+        },
+      } as Event;
+
+      safeStopPropagation(event);
+      expect(called).toBe(true);
+    });
+
+    it("does not throw when stopPropagation is not available", () => {
+      const event = {} as Event;
+      expect(() => safeStopPropagation(event)).not.toThrow();
+    });
+  });
+
+  describe("safePreventDefault", () => {
+    it("calls preventDefault when available", () => {
+      let called = false;
+      const event = {
+        preventDefault: () => {
+          called = true;
+        },
+      } as Event;
+
+      safePreventDefault(event);
+      expect(called).toBe(true);
+    });
+
+    it("does not throw when preventDefault is not available", () => {
+      const event = {} as Event;
+      expect(() => safePreventDefault(event)).not.toThrow();
+    });
+  });
+
+  describe("compareKeys additional binary tests", () => {
+    it("compares ArrayBuffer directly", () => {
+      const a = new ArrayBuffer(3);
+      const viewA = new Uint8Array(a);
+      viewA[0] = 1;
+      viewA[1] = 2;
+      viewA[2] = 3;
+
+      const b = new ArrayBuffer(3);
+      const viewB = new Uint8Array(b);
+      viewB[0] = 1;
+      viewB[1] = 2;
+      viewB[2] = 4;
+
+      expect(compareKeys(a, b)).toBe(-1);
+      expect(compareKeys(b, a)).toBe(1);
+    });
+
+    it("compares ArrayBuffer with Uint8Array", () => {
+      const buf = new ArrayBuffer(3);
+      const view = new Uint8Array(buf);
+      view[0] = 1;
+      view[1] = 2;
+      view[2] = 3;
+
+      const arr = new Uint8Array([1, 2, 3]);
+
+      expect(compareKeys(buf, arr)).toBe(0);
+    });
+
+    it("compares different TypedArray views", () => {
+      const a = new Int8Array([1, 2, 3]);
+      const b = new Uint8Array([1, 2, 3]);
+      expect(compareKeys(a, b)).toBe(0);
     });
   });
 });
