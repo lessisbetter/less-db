@@ -175,7 +175,7 @@ describe("DBCore", () => {
         expect(result.results![1]).toBeGreaterThan(result.results![0] as number);
       });
 
-      it("reports constraint errors", async () => {
+      it("reports constraint errors for single-item add (throws)", async () => {
         const trans = core.transaction(["users"], "readwrite");
         const table = core.table("users");
 
@@ -186,16 +186,40 @@ describe("DBCore", () => {
           values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
         });
 
-        // Try to add duplicate email
+        // Try to add duplicate email - single-item operations throw
+        await expect(
+          table.mutate({
+            trans,
+            type: "add",
+            values: [{ name: "Alice2", email: "alice@test.com", age: 25 }],
+          }),
+        ).rejects.toThrow();
+      });
+
+      it("reports constraint errors for bulk add (returns failures)", async () => {
+        const trans = core.transaction(["users"], "readwrite");
+        const table = core.table("users");
+
+        // Add first user
+        await table.mutate({
+          trans,
+          type: "add",
+          values: [{ name: "Alice", email: "alice@test.com", age: 30 }],
+        });
+
+        // Try to add items where one has duplicate email - bulk operations return failures
         const result = await table.mutate({
           trans,
           type: "add",
-          values: [{ name: "Alice2", email: "alice@test.com", age: 25 }],
+          values: [
+            { name: "Bob", email: "bob@test.com", age: 25 },
+            { name: "Alice2", email: "alice@test.com", age: 25 }, // Duplicate
+          ],
         });
 
         expect(result.numFailures).toBe(1);
         expect(result.failures).toBeDefined();
-        expect(result.failures![0]).toBeDefined();
+        expect(result.failures![1]).toBeDefined(); // Second item failed
       });
 
       it("works with outbound keys", async () => {
@@ -629,18 +653,35 @@ describe("DBCore", () => {
   });
 
   describe("error handling", () => {
-    it("reports failure for write operations on readonly transaction", async () => {
+    it("throws for single-item write on readonly transaction", async () => {
       const trans = core.transaction(["users"], "readonly");
       const table = core.table("users");
 
-      // DBCore returns failures in response rather than rejecting
+      // Single-item operations throw instead of returning failures
+      await expect(
+        table.mutate({
+          trans,
+          type: "add",
+          values: [{ name: "Test", email: "test@test.com", age: 20 }],
+        }),
+      ).rejects.toThrow(/readonly/);
+    });
+
+    it("reports failures for bulk write on readonly transaction", async () => {
+      const trans = core.transaction(["users"], "readonly");
+      const table = core.table("users");
+
+      // Bulk operations return failures in response
       const result = await table.mutate({
         trans,
         type: "add",
-        values: [{ name: "Test", email: "test@test.com", age: 20 }],
+        values: [
+          { name: "Test1", email: "test1@test.com", age: 20 },
+          { name: "Test2", email: "test2@test.com", age: 25 },
+        ],
       });
 
-      expect(result.numFailures).toBe(1);
+      expect(result.numFailures).toBe(2);
       expect(result.failures).toBeDefined();
       expect(result.failures![0]).toBeInstanceOf(Error);
       expect(result.failures![0].message).toContain("readonly");

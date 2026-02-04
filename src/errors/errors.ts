@@ -117,7 +117,96 @@ export class VersionChangeError extends LessDBError {
 }
 
 /**
- * Maps native IDB errors to LessDB errors.
+ * Thrown when an operation is attempted on a closed database.
+ */
+export class DatabaseClosedError extends LessDBError {
+  constructor(message = "Database has been closed", inner?: Error) {
+    super(message, inner);
+    this.name = "DatabaseClosedError";
+  }
+}
+
+/**
+ * Thrown when data cannot be cloned for storage in IndexedDB.
+ */
+export class DataCloneError extends LessDBError {
+  constructor(message = "Data could not be cloned for storage", inner?: Error) {
+    super(message, inner);
+    this.name = "DataCloneError";
+  }
+}
+
+/**
+ * Thrown when an invalid access is attempted.
+ */
+export class InvalidAccessError extends LessDBError {
+  constructor(message = "Invalid access", inner?: Error) {
+    super(message, inner);
+    this.name = "InvalidAccessError";
+  }
+}
+
+/**
+ * Thrown when opening the database fails.
+ */
+export class OpenFailedError extends LessDBError {
+  constructor(message = "Failed to open database", inner?: Error) {
+    super(message, inner);
+    this.name = "OpenFailedError";
+  }
+}
+
+/**
+ * Thrown when storage quota is exceeded.
+ */
+export class QuotaExceededError extends LessDBError {
+  constructor(message = "Storage quota exceeded", inner?: Error) {
+    super(message, inner);
+    this.name = "QuotaExceededError";
+  }
+}
+
+/**
+ * Thrown when a write operation is attempted on a read-only transaction.
+ */
+export class ReadOnlyError extends LessDBError {
+  constructor(message = "Cannot write in read-only transaction", inner?: Error) {
+    super(message, inner);
+    this.name = "ReadOnlyError";
+  }
+}
+
+/**
+ * Thrown when an operation times out.
+ */
+export class TimeoutError extends LessDBError {
+  constructor(message = "Operation timed out", inner?: Error) {
+    super(message, inner);
+    this.name = "TimeoutError";
+  }
+}
+
+/**
+ * Thrown when a transaction is no longer active.
+ */
+export class TransactionInactiveError extends LessDBError {
+  constructor(message = "Transaction is no longer active", inner?: Error) {
+    super(message, inner);
+    this.name = "TransactionInactiveError";
+  }
+}
+
+/**
+ * Maps native IDB/DOMException errors to LessDB errors.
+ *
+ * Mapped from IndexedDB DOMExceptions:
+ * - AbortError, ConstraintError, DataCloneError, DataError, InvalidAccessError,
+ *   InvalidStateError, NotFoundError, QuotaExceededError, ReadOnlyError,
+ *   TimeoutError, TransactionInactiveError, VersionError
+ *
+ * LessDB-specific errors (thrown directly by our code, not mapped):
+ * - BlockedError, DatabaseClosedError, InvalidTableError, MissingAPIError,
+ *   OpenFailedError, SchemaError, VersionChangeError
  */
 export function mapError(error: unknown): LessDBError {
   if (error instanceof LessDBError) {
@@ -129,16 +218,30 @@ export function mapError(error: unknown): LessDBError {
     const message = error.message;
 
     switch (name) {
-      case "ConstraintError":
-        return new ConstraintError(message, error);
-      case "NotFoundError":
-        return new NotFoundError(message, error);
-      case "InvalidStateError":
-        return new InvalidStateError(message, error);
-      case "DataError":
-        return new DataError(message, error);
       case "AbortError":
         return new AbortError(message, error);
+      case "ConstraintError":
+        return new ConstraintError(message, error);
+      case "DataCloneError":
+        return new DataCloneError(message, error);
+      case "DataError":
+        return new DataError(message, error);
+      case "InvalidAccessError":
+        return new InvalidAccessError(message, error);
+      case "InvalidStateError":
+        return new InvalidStateError(message, error);
+      case "NotFoundError":
+        return new NotFoundError(message, error);
+      case "QuotaExceededError":
+        return new QuotaExceededError(message, error);
+      case "ReadOnlyError":
+        return new ReadOnlyError(message, error);
+      case "TimeoutError":
+        return new TimeoutError(message, error);
+      case "TransactionInactiveError":
+        return new TransactionInactiveError(message, error);
+      case "VersionError":
+        return new VersionChangeError(message, error);
       default:
         return new LessDBError(message, error);
     }

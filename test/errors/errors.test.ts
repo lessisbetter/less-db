@@ -1,15 +1,23 @@
 import { describe, it, expect } from "vitest";
 import {
   LessDBError,
+  AbortError,
+  BlockedError,
   ConstraintError,
-  NotFoundError,
+  DatabaseClosedError,
+  DataCloneError,
+  DataError,
+  InvalidAccessError,
   InvalidStateError,
   InvalidTableError,
-  DataError,
-  AbortError,
   MissingAPIError,
+  NotFoundError,
+  OpenFailedError,
+  QuotaExceededError,
+  ReadOnlyError,
   SchemaError,
-  BlockedError,
+  TimeoutError,
+  TransactionInactiveError,
   VersionChangeError,
   mapError,
 } from "../../src/errors/errors.js";
@@ -263,6 +271,190 @@ describe("errors", () => {
     });
   });
 
+  describe("DatabaseClosedError", () => {
+    it("has correct name and default message", () => {
+      const error = new DatabaseClosedError();
+      expect(error.name).toBe("DatabaseClosedError");
+      expect(error.message).toBe("Database has been closed");
+    });
+
+    it("accepts custom message", () => {
+      const error = new DatabaseClosedError("Cannot perform operation on closed database");
+      expect(error.message).toBe("Cannot perform operation on closed database");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new DatabaseClosedError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new DatabaseClosedError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
+  describe("DataCloneError", () => {
+    it("has correct name and default message", () => {
+      const error = new DataCloneError();
+      expect(error.name).toBe("DataCloneError");
+      expect(error.message).toBe("Data could not be cloned for storage");
+    });
+
+    it("accepts custom message", () => {
+      const error = new DataCloneError("Cannot store function values");
+      expect(error.message).toBe("Cannot store function values");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new DataCloneError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new DataCloneError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
+  describe("InvalidAccessError", () => {
+    it("has correct name and default message", () => {
+      const error = new InvalidAccessError();
+      expect(error.name).toBe("InvalidAccessError");
+      expect(error.message).toBe("Invalid access");
+    });
+
+    it("accepts custom message", () => {
+      const error = new InvalidAccessError("Cannot access index during upgrade");
+      expect(error.message).toBe("Cannot access index during upgrade");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new InvalidAccessError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new InvalidAccessError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
+  describe("OpenFailedError", () => {
+    it("has correct name and default message", () => {
+      const error = new OpenFailedError();
+      expect(error.name).toBe("OpenFailedError");
+      expect(error.message).toBe("Failed to open database");
+    });
+
+    it("accepts custom message", () => {
+      const error = new OpenFailedError("Database 'mydb' failed to open");
+      expect(error.message).toBe("Database 'mydb' failed to open");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new OpenFailedError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new OpenFailedError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
+  describe("QuotaExceededError", () => {
+    it("has correct name and default message", () => {
+      const error = new QuotaExceededError();
+      expect(error.name).toBe("QuotaExceededError");
+      expect(error.message).toBe("Storage quota exceeded");
+    });
+
+    it("accepts custom message", () => {
+      const error = new QuotaExceededError("Cannot add data: storage limit reached");
+      expect(error.message).toBe("Cannot add data: storage limit reached");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new QuotaExceededError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new QuotaExceededError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
+  describe("ReadOnlyError", () => {
+    it("has correct name and default message", () => {
+      const error = new ReadOnlyError();
+      expect(error.name).toBe("ReadOnlyError");
+      expect(error.message).toBe("Cannot write in read-only transaction");
+    });
+
+    it("accepts custom message", () => {
+      const error = new ReadOnlyError("Write operation not allowed in readonly mode");
+      expect(error.message).toBe("Write operation not allowed in readonly mode");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new ReadOnlyError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new ReadOnlyError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
+  describe("TimeoutError", () => {
+    it("has correct name and default message", () => {
+      const error = new TimeoutError();
+      expect(error.name).toBe("TimeoutError");
+      expect(error.message).toBe("Operation timed out");
+    });
+
+    it("accepts custom message", () => {
+      const error = new TimeoutError("Transaction timed out after 5 seconds");
+      expect(error.message).toBe("Transaction timed out after 5 seconds");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new TimeoutError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new TimeoutError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
+  describe("TransactionInactiveError", () => {
+    it("has correct name and default message", () => {
+      const error = new TransactionInactiveError();
+      expect(error.name).toBe("TransactionInactiveError");
+      expect(error.message).toBe("Transaction is no longer active");
+    });
+
+    it("accepts custom message", () => {
+      const error = new TransactionInactiveError("Transaction was committed");
+      expect(error.message).toBe("Transaction was committed");
+    });
+
+    it("stores inner error", () => {
+      const inner = new Error("original");
+      const error = new TransactionInactiveError("wrapped", inner);
+      expect(error.inner).toBe(inner);
+    });
+
+    it("is instance of LessDBError", () => {
+      expect(new TransactionInactiveError()).toBeInstanceOf(LessDBError);
+    });
+  });
+
   describe("mapError", () => {
     it("returns LessDBError unchanged", () => {
       const original = new ConstraintError("test");
@@ -305,6 +497,55 @@ describe("errors", () => {
       native.name = "AbortError";
       const mapped = mapError(native);
       expect(mapped).toBeInstanceOf(AbortError);
+    });
+
+    it("maps DataCloneError", () => {
+      const native = new Error("cannot clone");
+      native.name = "DataCloneError";
+      const mapped = mapError(native);
+      expect(mapped).toBeInstanceOf(DataCloneError);
+    });
+
+    it("maps InvalidAccessError", () => {
+      const native = new Error("invalid access");
+      native.name = "InvalidAccessError";
+      const mapped = mapError(native);
+      expect(mapped).toBeInstanceOf(InvalidAccessError);
+    });
+
+    it("maps QuotaExceededError", () => {
+      const native = new Error("quota exceeded");
+      native.name = "QuotaExceededError";
+      const mapped = mapError(native);
+      expect(mapped).toBeInstanceOf(QuotaExceededError);
+    });
+
+    it("maps ReadOnlyError", () => {
+      const native = new Error("read only");
+      native.name = "ReadOnlyError";
+      const mapped = mapError(native);
+      expect(mapped).toBeInstanceOf(ReadOnlyError);
+    });
+
+    it("maps TimeoutError", () => {
+      const native = new Error("timeout");
+      native.name = "TimeoutError";
+      const mapped = mapError(native);
+      expect(mapped).toBeInstanceOf(TimeoutError);
+    });
+
+    it("maps TransactionInactiveError", () => {
+      const native = new Error("inactive");
+      native.name = "TransactionInactiveError";
+      const mapped = mapError(native);
+      expect(mapped).toBeInstanceOf(TransactionInactiveError);
+    });
+
+    it("maps VersionError to VersionChangeError", () => {
+      const native = new Error("version mismatch");
+      native.name = "VersionError";
+      const mapped = mapError(native);
+      expect(mapped).toBeInstanceOf(VersionChangeError);
     });
 
     it("maps unknown Error to LessDBError", () => {

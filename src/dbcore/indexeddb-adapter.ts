@@ -214,6 +214,11 @@ class IDBCoreTable implements DBCoreTable {
     source: IDBObjectStore | IDBIndex,
     req: DBCoreQueryRequest,
   ): Promise<DBCoreQueryResponse> {
+    // Handle limit=0 case - return empty result immediately
+    if (req.limit === 0) {
+      return { result: [] };
+    }
+
     const IDBKeyRange = getIDBKeyRange();
     if (!IDBKeyRange) {
       return { result: [] };
@@ -235,7 +240,7 @@ class IDBCoreTable implements DBCoreTable {
       const allResults = await Promise.all(promises);
       for (const items of allResults) {
         result.push(...items);
-        if (req.limit && result.length >= req.limit) {
+        if (req.limit !== undefined && result.length >= req.limit) {
           break;
         }
       }
@@ -244,13 +249,13 @@ class IDBCoreTable implements DBCoreTable {
       for (const value of values) {
         const singleRange = IDBKeyRange.only(value);
         await this.cursorQuery(source, singleRange, direction, req, result, wantValues);
-        if (req.limit && result.length >= req.limit) {
+        if (req.limit !== undefined && result.length >= req.limit) {
           break;
         }
       }
     }
 
-    return { result: result.slice(0, req.limit) };
+    return { result: req.limit !== undefined ? result.slice(0, req.limit) : result };
   }
 
   /**
@@ -260,6 +265,11 @@ class IDBCoreTable implements DBCoreTable {
     source: IDBObjectStore | IDBIndex,
     req: DBCoreQueryRequest,
   ): Promise<DBCoreQueryResponse> {
+    // Handle limit=0 case - return empty result immediately
+    if (req.limit === 0) {
+      return { result: [] };
+    }
+
     const result: unknown[] = [];
     const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
     const wantValues = req.values !== false;
@@ -286,6 +296,11 @@ class IDBCoreTable implements DBCoreTable {
     source: IDBObjectStore | IDBIndex,
     req: DBCoreQueryRequest,
   ): Promise<DBCoreQueryResponse> {
+    // Handle limit=0 case - return empty result immediately
+    if (req.limit === 0) {
+      return { result: [] };
+    }
+
     const result: unknown[] = [];
     const idbRange = toIDBKeyRange(req.query.range);
     const direction: IDBCursorDirection = req.reverse ? "prev" : "next";
@@ -311,6 +326,11 @@ class IDBCoreTable implements DBCoreTable {
     source: IDBObjectStore | IDBIndex,
     req: DBCoreQueryRequest,
   ): Promise<DBCoreQueryResponse> {
+    // Handle limit=0 case - return empty result immediately
+    if (req.limit === 0) {
+      return { result: [] };
+    }
+
     const idbRange = toIDBKeyRange(req.query.range);
     const wantValues = req.values !== false;
 
@@ -535,7 +555,7 @@ class IDBCoreTable implements DBCoreTable {
 
     switch (req.type) {
       case "add": {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
           const length = req.values.length;
           if (length === 0) {
             return resolve({ numFailures: 0, results: [], lastResult: undefined });
@@ -547,6 +567,8 @@ class IDBCoreTable implements DBCoreTable {
           let completedCount = 0;
           // Track the highest index that completed successfully for lastResult
           let lastSuccessIndex = -1;
+          // For single-item operations, let errors abort the transaction naturally
+          const preventAbort = length > 1;
 
           const handleComplete = () => {
             if (++completedCount === length) {
@@ -578,25 +600,34 @@ class IDBCoreTable implements DBCoreTable {
                 handleComplete();
               };
               idbReq.onerror = (event) => {
-                event.preventDefault(); // Prevent transaction abort
-                failures[i] = mapError(idbReq.error);
-                numFailures++;
-                results[i] = undefined;
-                handleComplete();
+                if (preventAbort) {
+                  event.preventDefault(); // Prevent transaction abort for bulk operations
+                  failures[i] = mapError(idbReq.error);
+                  numFailures++;
+                  results[i] = undefined;
+                  handleComplete();
+                } else {
+                  // For single-item operations, reject and let transaction abort
+                  reject(mapError(idbReq.error));
+                }
               };
             } catch (error) {
               // Synchronous errors (e.g., readonly transaction)
-              failures[i] = mapError(error);
-              numFailures++;
-              results[i] = undefined;
-              handleComplete();
+              if (preventAbort) {
+                failures[i] = mapError(error);
+                numFailures++;
+                results[i] = undefined;
+                handleComplete();
+              } else {
+                reject(mapError(error));
+              }
             }
           }
         });
       }
 
       case "put": {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
           const length = req.values.length;
           if (length === 0) {
             return resolve({ numFailures: 0, results: [], lastResult: undefined });
@@ -608,6 +639,8 @@ class IDBCoreTable implements DBCoreTable {
           let completedCount = 0;
           // Track the highest index that completed successfully for lastResult
           let lastSuccessIndex = -1;
+          // For single-item operations, let errors abort the transaction naturally
+          const preventAbort = length > 1;
 
           const handleComplete = () => {
             if (++completedCount === length) {
@@ -639,25 +672,34 @@ class IDBCoreTable implements DBCoreTable {
                 handleComplete();
               };
               idbReq.onerror = (event) => {
-                event.preventDefault();
-                failures[i] = mapError(idbReq.error);
-                numFailures++;
-                results[i] = undefined;
-                handleComplete();
+                if (preventAbort) {
+                  event.preventDefault(); // Prevent transaction abort for bulk operations
+                  failures[i] = mapError(idbReq.error);
+                  numFailures++;
+                  results[i] = undefined;
+                  handleComplete();
+                } else {
+                  // For single-item operations, reject and let transaction abort
+                  reject(mapError(idbReq.error));
+                }
               };
             } catch (error) {
               // Synchronous errors (e.g., readonly transaction)
-              failures[i] = mapError(error);
-              numFailures++;
-              results[i] = undefined;
-              handleComplete();
+              if (preventAbort) {
+                failures[i] = mapError(error);
+                numFailures++;
+                results[i] = undefined;
+                handleComplete();
+              } else {
+                reject(mapError(error));
+              }
             }
           }
         });
       }
 
       case "delete": {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
           const length = req.keys.length;
           if (length === 0) {
             return resolve({ numFailures: 0 });
@@ -666,6 +708,8 @@ class IDBCoreTable implements DBCoreTable {
           const failures: Record<number, Error> = {};
           let numFailures = 0;
           let completedCount = 0;
+          // For single-item operations, let errors abort the transaction naturally
+          const preventAbort = length > 1;
 
           const handleComplete = () => {
             if (++completedCount === length) {
@@ -682,16 +726,25 @@ class IDBCoreTable implements DBCoreTable {
 
               idbReq.onsuccess = handleComplete;
               idbReq.onerror = (event) => {
-                event.preventDefault();
-                failures[i] = mapError(idbReq.error);
-                numFailures++;
-                handleComplete();
+                if (preventAbort) {
+                  event.preventDefault(); // Prevent transaction abort for bulk operations
+                  failures[i] = mapError(idbReq.error);
+                  numFailures++;
+                  handleComplete();
+                } else {
+                  // For single-item operations, reject and let transaction abort
+                  reject(mapError(idbReq.error));
+                }
               };
             } catch (error) {
               // Synchronous errors (e.g., readonly transaction)
-              failures[i] = mapError(error);
-              numFailures++;
-              handleComplete();
+              if (preventAbort) {
+                failures[i] = mapError(error);
+                numFailures++;
+                handleComplete();
+              } else {
+                reject(mapError(error));
+              }
             }
           }
         });
