@@ -253,10 +253,21 @@ export class Collection<T, TKey> {
       const seenKeys = new Set<string>();
       const schema = ctx.table.schema;
 
+      // Helper to serialize keys with type prefixes (faster than JSON.stringify)
+      const serializeKey = (key: unknown): string => {
+        const type = typeof key;
+        if (type === "number") return `n:${key}`;
+        if (type === "string") return `s:${key}`;
+        if (type === "boolean") return `b:${key}`;
+        if (key === null) return "null";
+        if (key === undefined) return "undefined";
+        return `o:${JSON.stringify(key)}`;
+      };
+
       // Track seen keys from main result (extract from values)
       const mainKeys = extractPrimaryKeys(values, schema);
       for (const key of mainKeys) {
-        seenKeys.add(JSON.stringify(key));
+        seenKeys.add(serializeKey(key));
       }
 
       // Execute each OR context and merge
@@ -265,7 +276,7 @@ export class Collection<T, TKey> {
         const orKeys = extractPrimaryKeys(orValues, schema);
 
         for (let i = 0; i < orValues.length; i++) {
-          const keyStr = JSON.stringify(orKeys[i]);
+          const keyStr = serializeKey(orKeys[i]);
           if (!seenKeys.has(keyStr)) {
             seenKeys.add(keyStr);
             values.push(orValues[i] as T);
@@ -305,16 +316,16 @@ export class Collection<T, TKey> {
     const ctx = this._ctx;
     const trans = this._getTransaction();
 
-    // If we have complex conditions, use toArray and count
-    if (ctx.filter || ctx.index || ctx.until || ctx.orContexts) {
+    // If we have filters, until, or OR contexts, we need to fetch and count
+    if (ctx.filter || ctx.until || ctx.orContexts) {
       const items = await this.toArray();
       return items.length;
     }
 
-    // Otherwise we can use the DB count on primary key
+    // For simple range/index queries, use fast DB count
     return ctx.table.count({
       trans,
-      query: primaryKeyQuery(ctx.table.schema, ctx.range),
+      query: buildQuery(ctx),
     });
   }
 
@@ -352,9 +363,20 @@ export class Collection<T, TKey> {
     if (ctx.orContexts && ctx.orContexts.length > 0) {
       const seenKeys = new Set<string>();
 
+      // Helper to serialize keys (same fast-path logic as toArray)
+      const serializeKey = (key: unknown): string => {
+        const type = typeof key;
+        if (type === "number") return `n:${key}`;
+        if (type === "string") return `s:${key}`;
+        if (type === "boolean") return `b:${key}`;
+        if (key === null) return "null";
+        if (key === undefined) return "undefined";
+        return `o:${JSON.stringify(key)}`;
+      };
+
       // Track seen keys from main result
       for (const key of keys) {
-        seenKeys.add(JSON.stringify(key));
+        seenKeys.add(serializeKey(key));
       }
 
       // Execute each OR context and merge
@@ -363,7 +385,7 @@ export class Collection<T, TKey> {
         const orKeys = extractPrimaryKeys(orValues, schema);
 
         for (const key of orKeys) {
-          const keyStr = JSON.stringify(key);
+          const keyStr = serializeKey(key);
           if (!seenKeys.has(keyStr)) {
             seenKeys.add(keyStr);
             keys.push(key as TKey);

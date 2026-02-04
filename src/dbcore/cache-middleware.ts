@@ -57,11 +57,20 @@ function getTableCache(transCache: TransactionCache, tableName: string): TableCa
 
 /**
  * Serialize a key for use as a Map key.
- * Uses JSON.stringify consistently to avoid collisions between
- * different types (e.g., numeric 1 vs string "1").
+ * Fast-paths primitives to avoid JSON.stringify overhead.
+ * Uses type prefixes to avoid collisions (e.g., numeric 1 vs string "1").
  */
 function serializeKey(key: unknown): string {
-  return JSON.stringify(key);
+  // Fast path for common primitive types
+  const type = typeof key;
+  if (type === "number") return `n:${key}`;
+  if (type === "string") return `s:${key}`;
+  if (type === "boolean") return `b:${key}`;
+  if (key === null) return "null";
+  if (key === undefined) return "undefined";
+
+  // Slow path for objects, arrays, dates, etc.
+  return `o:${JSON.stringify(key)}`;
 }
 
 /**

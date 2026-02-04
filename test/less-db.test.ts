@@ -434,6 +434,22 @@ describe("LessDB", () => {
 
         expect(results).toHaveLength(3); // Bob, Diana (25), Charlie (35)
       });
+
+      it("handles large anyOf arrays efficiently", async () => {
+        const users = db.table<User, number>("users");
+        // Add more users with different ages
+        await users.bulkAdd([
+          { name: "User1", email: "u1@test.com", age: 21 },
+          { name: "User2", email: "u2@test.com", age: 22 },
+          { name: "User3", email: "u3@test.com", age: 23 },
+          { name: "User4", email: "u4@test.com", age: 24 },
+        ]);
+
+        // Query with multiple values (should execute in parallel)
+        const results = await users.where("age").anyOf([21, 22, 23, 24, 25]).toArray();
+
+        expect(results).toHaveLength(6); // 2 at age 25, plus 4 new users
+      });
     });
 
     describe("above/below", () => {

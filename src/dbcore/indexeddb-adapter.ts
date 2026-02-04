@@ -192,26 +192,38 @@ class IDBCoreTable implements DBCoreTable {
 
     const result: unknown[] = [];
 
-    // Handle "any of" queries by doing multiple queries
+    // Handle "any of" queries by doing multiple queries IN PARALLEL
     if (req.query.range.type === DBCoreRangeType.Any && req.query.range.values) {
       const IDBKeyRange = getIDBKeyRange();
       if (!IDBKeyRange) {
         return { result: [] };
       }
-      for (const value of req.query.range.values) {
-        const singleRange = IDBKeyRange.only(value);
 
-        if (this.useGetAll && !req.offset) {
-          const items = wantValues
-            ? await promisifyRequest(source.getAll(singleRange, req.limit))
-            : await promisifyRequest(source.getAllKeys(singleRange, req.limit));
+      // Issue all queries in parallel for better performance
+      if (this.useGetAll && !req.offset) {
+        const promises = req.query.range.values.map((value) => {
+          const singleRange = IDBKeyRange.only(value);
+          return wantValues
+            ? promisifyRequest(source.getAll(singleRange, req.limit))
+            : promisifyRequest(source.getAllKeys(singleRange, req.limit));
+        });
+
+        const allResults = await Promise.all(promises);
+        for (const items of allResults) {
           result.push(...items);
-        } else {
-          await this.cursorQuery(source, singleRange, direction, req, result, wantValues);
+          if (req.limit && result.length >= req.limit) {
+            break;
+          }
         }
+      } else {
+        // Cursor-based queries must be sequential
+        for (const value of req.query.range.values) {
+          const singleRange = IDBKeyRange.only(value);
+          await this.cursorQuery(source, singleRange, direction, req, result, wantValues);
 
-        if (req.limit && result.length >= req.limit) {
-          break;
+          if (req.limit && result.length >= req.limit) {
+            break;
+          }
         }
       }
 
